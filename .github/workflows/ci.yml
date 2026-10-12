@@ -37,6 +37,9 @@ jobs:
           python -m compileall -q main.py catalog.py diagnostics.py hideout_data.py players.py recognition.py storage.py task_requirements.py web_server.py
           python -c "import catalog, diagnostics, hideout_data, main, players, recognition, storage, task_requirements, web_server; print('Python imports passed')"
 
+      - name: Check Windows console encoding
+        run: python -c "import sys; sys.stdout.reconfigure(encoding='cp1252'); import web_server; web_server._configure_console_encoding(); print('塔科夫启动编码正常')"
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:

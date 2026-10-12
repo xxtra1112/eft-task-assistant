@@ -8,6 +8,7 @@ import math
 import mimetypes
 import os
 import re
+import sys
 import threading
 import time
 import traceback
@@ -2275,7 +2276,14 @@ def _bind_server(state: PlayerStateManager) -> ThreadingHTTPServer:
     raise RuntimeError(f"无法在 {host}:8765-8785 启动本地服务：{last_error}")
 
 
+def _configure_console_encoding() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        if stream is not None and hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
 def main() -> int:
+    _configure_console_encoding()
     configure_logging()
     state = PlayerStateManager()
     try:

@@ -2,7 +2,9 @@
 
 **逃离塔科夫任务、地图与藏身处规划工具。** 通过游戏内截图识别商人任务，跟踪每项要求，整理任务钥匙与藏身处升级材料，并在地图上查看任务点位。
 
-[English](README.en.md) · [下载 Windows 版](https://github.com/xxtra1112/eft-task-assistant/releases/latest) · [报告问题](https://github.com/xxtra1112/eft-task-assistant/issues)
+[English](README.en.md) · [Windows 版本发布页](https://github.com/xxtra1112/eft-task-assistant/releases) · [报告问题](https://github.com/xxtra1112/eft-task-assistant/issues)
+
+[![CI](https://github.com/xxtra1112/eft-task-assistant/actions/workflows/ci.yml/badge.svg)](https://github.com/xxtra1112/eft-task-assistant/actions/workflows/ci.yml)
 
 > 这是由玩家制作的社区工具，与 Battlestate Games 无关，也不是官方客户端或官方数据服务。请以游戏内实际任务要求为准。
 
@@ -18,6 +20,7 @@
 - [数据备份](#数据备份)
 - [常见问题](#常见问题)
 - [开发与构建](#开发与构建)
+- [持续集成与发布](#持续集成与发布)
 - [数据来源与许可](#数据来源与许可)
 
 ## 功能一览
@@ -31,15 +34,15 @@
 
 ## 安装与启动
 
-### Windows 可执行文件（推荐）
+### Windows 可执行文件
 
-1. 打开 [GitHub Releases](https://github.com/xxtra1112/eft-task-assistant/releases/latest)。
-2. 下载 `EFTTaskAssistant-v1.0.0-Windows-x64.exe` 并运行。
-3. 程序会启动本地网页服务并尝试打开浏览器。首次使用时，在这台电脑上创建管理员账号。
+目前暂无可下载的 Windows Release。后续版本会由 GitHub Actions 自动构建并发布到 [GitHub Releases](https://github.com/xxtra1112/eft-task-assistant/releases)；发布后下载对应版本的 `EFTTaskAssistant-v版本号-Windows-x64.exe` 并运行即可。
+
+程序会启动本地网页服务并尝试打开浏览器。首次使用时，在这台电脑上创建管理员账号。
 
 默认网页地址是 `http://127.0.0.1:8765/`。如果端口已被占用，程序会依次尝试 `8766` 到 `8785`；请使用启动窗口打印的地址和端口。使用期间不要关闭启动程序的终端窗口，关闭窗口会停止服务。预编译程序不需要另装 Python 或 Conda。
 
-该程序尚未进行代码签名，Windows 可能显示未知发布者提示。请只从本项目的 Releases 页面下载。
+发布的程序尚未进行代码签名，Windows 可能显示未知发布者提示。请只从本项目的 Releases 页面下载。
 
 ### 从源码运行
 
@@ -94,7 +97,8 @@ python main.py
 
 ~~~powershell
 $env:EFT_TASK_ASSISTANT_HOST = "0.0.0.0"
-& "$PWD/EFTTaskAssistant-v1.0.0-Windows-x64.exe"
+$exe = (Get-ChildItem -File 'EFTTaskAssistant-v*-Windows-x64.exe' | Select-Object -First 1).FullName
+& $exe
 ~~~
 
 在运行服务的电脑上用 `ipconfig` 查看局域网 IPv4 地址；其他设备打开 `http://电脑的局域网IP:启动窗口显示的端口/`。如果无法访问，请检查 Windows 防火墙是否允许该程序在**专用网络**通信。不要把端口转发到公网。
@@ -141,6 +145,10 @@ python -m pip install -r requirements-build.txt
 ~~~
 
 生成的文件位于 `dist` 目录。构建需要 Windows x64、Python 3.11 和网络连接，以便安装并打包 OCR 运行依赖。源代码欢迎通过 GitHub Issues 反馈问题或提交改进建议。
+
+## 持续集成与发布
+
+GitHub Actions 会在推送到 `main`、提交 Pull Request 或手动运行时检查 Python 依赖与模块导入、Python 编译和前端 JavaScript 语法。推送格式为 `v主版本.次版本.修订版本` 的新标签（例如 `v1.0.1`）后，工作流会在 Windows 上构建可执行文件、启动并检查网页返回 HTTP 200，然后自动创建 GitHub Release，附上程序、许可证、第三方声明和 SHA-256 校验值。
 
 ## 数据来源与许可
 

@@ -1,0 +1,151 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify source
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install runtime dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Check installed dependencies
+        run: python -m pip check
+
+      - name: Compile and import Python modules
+        run: |
+          python -m compileall -q main.py catalog.py diagnostics.py hideout_data.py players.py recognition.py storage.py task_requirements.py web_server.py
+          python -c "import catalog, diagnostics, hideout_data, main, players, recognition, storage, task_requirements, web_server; print('Python imports passed')"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Check frontend JavaScript syntax
+        run: node --check web/app.js
+
+  release:
+    name: Build and publish Windows release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: verify
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-build.txt
+
+      - name: Install build dependencies
+        run: python -m pip install -r requirements-build.txt
+
+      - name: Build Windows executable
+        id: build
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Release tag must use vMAJOR.MINOR.PATCH, got $env:GITHUB_REF_NAME"
+          }
+          & "$PWD/build_windows.ps1" -Version $version
+
+      - name: Smoke-test packaged executable
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          $exe = (Resolve-Path "dist/EFTTaskAssistant-v$version-Windows-x64.exe").Path
+          $dataRoot = Join-Path $env:RUNNER_TEMP 'eft-task-assistant-smoke'
+          $stdout = Join-Path $env:RUNNER_TEMP 'eft-task-assistant.stdout.log'
+          $stderr = Join-Path $env:RUNNER_TEMP 'eft-task-assistant.stderr.log'
+          New-Item -ItemType Directory -Force -Path $dataRoot | Out-Null
+          $env:LOCALAPPDATA = $dataRoot
+          $process = Start-Process -FilePath $exe -WorkingDirectory $PWD.Path -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          try {
+            $deadline = (Get-Date).AddSeconds(60)
+            $healthy = $false
+            while ((Get-Date) -lt $deadline) {
+              try {
+                $response = Invoke-WebRequest -Uri 'http://127.0.0.1:8765/' -TimeoutSec 3 -UseBasicParsing
+                if ($response.StatusCode -eq 200) {
+                  $healthy = $true
+                  break
+                }
+              } catch {
+                if ($process.HasExited) { break }
+              }
+              Start-Sleep -Seconds 1
+            }
+            if (-not $healthy) {
+              if (Test-Path $stdout) { Get-Content $stdout }
+              if (Test-Path $stderr) { Get-Content $stderr }
+              throw 'Packaged app did not return HTTP 200 on localhost:8765.'
+            }
+          } finally {
+            if (-not $process.HasExited) {
+              Stop-Process -Id $process.Id -Force
+            }
+          }
+
+      - name: Calculate executable SHA-256
+        id: checksum
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          $exe = "dist/EFTTaskAssistant-v$version-Windows-x64.exe"
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $exe).Hash.ToLowerInvariant()
+          "sha256=$hash" >> $env:GITHUB_OUTPUT
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: EFT Task Assistant ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          make_latest: true
+          fail_on_unmatched_files: true
+          body: |
+            ## 简体中文
+
+            EFT 任务助手 Windows x64 首次自动构建版本。下载可执行文件运行即可，无需另装 Python。首次使用请在服务所在电脑创建管理员账号；详细使用说明见仓库 README。
+
+            SHA-256: ${{ steps.checksum.outputs.sha256 }}
+
+            附带 MIT 许可证和可执行文件第三方组件声明。
+
+            ## English
+
+            Automatically built Windows x64 release of EFT Task Assistant. Run the executable directly; Python is not required. Create the administrator account on the host computer on first launch. See the repository README for setup and usage.
+
+            SHA-256: ${{ steps.checksum.outputs.sha256 }}
+
+            Includes the MIT license and notices for third-party components bundled in the executable.
+          files: |
+            dist/EFTTaskAssistant-${{ github.ref_name }}-Windows-x64.exe
+            dist/LICENSE.txt
+            dist/THIRD_PARTY_NOTICES.md

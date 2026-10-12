@@ -2,7 +2,9 @@
 
 **A quest, map, and Hideout planning companion for Escape from Tarkov.** Recognize trader quests from screenshots, track each objective, plan quest keys and Hideout materials, and view quest locations on maps.
 
-[简体中文](README.md) · [Download for Windows](https://github.com/xxtra1112/eft-task-assistant/releases/latest) · [Report a problem](https://github.com/xxtra1112/eft-task-assistant/issues)
+[简体中文](README.md) · [Windows releases](https://github.com/xxtra1112/eft-task-assistant/releases) · [Report a problem](https://github.com/xxtra1112/eft-task-assistant/issues)
+
+[![CI](https://github.com/xxtra1112/eft-task-assistant/actions/workflows/ci.yml/badge.svg)](https://github.com/xxtra1112/eft-task-assistant/actions/workflows/ci.yml)
 
 > This is a community-made tool. It is not affiliated with Battlestate Games and is not an official client or data service. Always verify requirements in the game.
 
@@ -18,6 +20,7 @@
 - [Back up your data](#back-up-your-data)
 - [Troubleshooting](#troubleshooting)
 - [Development and build](#development-and-build)
+- [Continuous integration and releases](#continuous-integration-and-releases)
 - [Data sources and license](#data-sources-and-license)
 
 ## Features
@@ -31,15 +34,15 @@
 
 ## Install and run
 
-### Windows executable (recommended)
+### Windows executable
 
-1. Open [GitHub Releases](https://github.com/xxtra1112/eft-task-assistant/releases/latest).
-2. Download and run `EFTTaskAssistant-v1.0.0-Windows-x64.exe`.
-3. The app starts a local web server and attempts to open your browser. Create the administrator account on this computer the first time you run it.
+There is currently no Windows release available for download. Future versions will be built and published automatically by GitHub Actions on [GitHub Releases](https://github.com/xxtra1112/eft-task-assistant/releases). Once published, download and run `EFTTaskAssistant-vVERSION-Windows-x64.exe` for the desired version.
+
+The app starts a local web server and attempts to open your browser. Create the administrator account on this computer the first time you run it.
 
 The default address is `http://127.0.0.1:8765/`. If the port is busy, the app tries ports `8766` through `8785`; use the address and port printed in the launch window. Keep that window open while using the app. Closing it stops the service. The prebuilt executable does not require Python or Conda.
 
-The executable is not code-signed, so Windows may show an unknown-publisher warning. Download it only from this project's Releases page.
+Published executables are not code-signed, so Windows may show an unknown-publisher warning. Download them only from this project's Releases page.
 
 ### Run from source
 
@@ -94,7 +97,8 @@ By default, the service accepts connections only from the computer running it. T
 
 ~~~powershell
 $env:EFT_TASK_ASSISTANT_HOST = "0.0.0.0"
-& "$PWD/EFTTaskAssistant-v1.0.0-Windows-x64.exe"
+$exe = (Get-ChildItem -File 'EFTTaskAssistant-v*-Windows-x64.exe' | Select-Object -First 1).FullName
+& $exe
 ~~~
 
 Run `ipconfig` on the host computer to find its LAN IPv4 address. On another device, open `http://<host-LAN-IP>:<port-shown-at-startup>/`. If it does not connect, check that Windows Firewall allows the app on a **Private network**. Do not forward the port to the public internet.
@@ -141,6 +145,10 @@ python -m pip install -r requirements-build.txt
 ~~~
 
 The executable is written to the `dist` directory. Building requires Windows x64, Python 3.11, and internet access to install and bundle the OCR runtime dependencies. Bug reports and improvement suggestions are welcome on GitHub Issues.
+
+## Continuous integration and releases
+
+GitHub Actions checks Python dependencies and imports, Python compilation, and frontend JavaScript syntax on pushes to `main`, pull requests, and manual runs. Pushing a new version tag in `vMAJOR.MINOR.PATCH` format (for example, `v1.0.1`) runs a Windows build, starts the executable and checks for an HTTP 200 response, then creates a GitHub Release with the executable, license, third-party notices, and SHA-256 checksum.
 
 ## Data sources and license
 

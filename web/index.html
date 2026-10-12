@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#0b0b0c">
+  <title>EFT 任务助手</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+  <section id="authScreen" class="auth-screen" hidden>
+    <article class="auth-card panel">
+      <div class="brand-lockup">
+        <div class="brand-mark" aria-hidden="true">E</div>
+        <div>
+          <div class="eyebrow">玩家数据隔离</div>
+          <h1>EFT 任务助手</h1>
+        </div>
+      </div>
+      <button id="authLanguageToggle" class="language-toggle auth-language-toggle" type="button" aria-label="Switch to English" title="Switch to English">
+        <span id="authLanguageToggleLabel">EN</span>
+      </button>
+      <p class="auth-description">登录后查看自己的任务、截图、档案和地图标注；不同玩家的数据彼此隔离。</p>
+      <form id="authForm" class="auth-form">
+        <label>玩家名称<input id="authUsername" name="username" required maxlength="32" autocomplete="username" placeholder="输入玩家名称"></label>
+        <label>密码<input id="authPassword" name="password" type="password" required minlength="8" maxlength="256" autocomplete="current-password" placeholder="至少 8 个字符"></label>
+        <p id="authError" class="auth-error" role="alert" hidden></p>
+        <button id="authSubmitButton" class="button button-primary" type="submit">登录</button>
+      </form>
+      <button id="authModeButton" class="button button-quiet auth-mode-button" type="button">创建新玩家账号</button>
+      <p id="firstAccountNotice" class="auth-notice" hidden>首次创建的管理员账号请在运行服务的电脑上完成；之后才可从局域网注册其他账号。</p>
+    </article>
+  </section>
+
+  <main id="appShell" class="app-shell" hidden>
+    <header class="topbar">
+      <div class="brand-lockup">
+        <div class="brand-mark" aria-hidden="true">E</div>
+        <div>
+        <div class="eyebrow">本地塔科夫助手</div>
+        <h1>EFT 任务助手</h1>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <button id="languageToggle" class="language-toggle" type="button" aria-label="Switch to English" title="Switch to English">
+          <span id="languageToggleLabel">EN</span>
+        </button>
+        <button id="themeToggle" class="theme-toggle" type="button" aria-label="切换到白天模式" title="切换到白天模式">
+          <span id="themeToggleIcon" class="theme-toggle-icon" aria-hidden="true">☼</span>
+          <span id="themeToggleLabel">白天模式</span>
+        </button>
+        <div id="playerSession" class="player-session" hidden>
+          <span id="currentPlayerName"></span>
+          <button id="logoutButton" class="button button-quiet button-small" type="button">退出</button>
+        </div>
+        <div class="topbar-status">
+          <span class="status-dot"></span>
+          <span id="connectionState">连接本地服务…</span>
+        </div>
+      </div>
+    </header>
+
+    <details class="quick-nav">
+      <summary aria-label="打开快速跳转目录" title="快速跳转目录">目录</summary>
+      <nav class="quick-nav-menu" aria-label="快速跳转目录">
+        <a href="#screenshotPanel">截图识别</a>
+        <a href="#tasksPanel">任务清单</a>
+        <a href="#keyPlannerPanel">任务钥匙</a>
+        <a href="#hideoutPlannerPanel">藏身处规划</a>
+        <a href="#mapPlannerPanel">地图点位</a>
+        <a href="#hideoutMaterialsPanel">升级物品统计</a>
+        <a href="#diagnosticsPanel">识别诊断与日志</a>
+      </nav>
+    </details>
+
+    <section class="toolbar panel">
+      <label class="profile-control">
+        <span>游戏档案</span>
+        <select id="profileSelect" aria-label="选择游戏档案"></select>
+      </label>
+      <button id="newProfileButton" class="button button-secondary">新建档案</button>
+      <div class="toolbar-spacer"></div>
+      <span class="hotkey-hint">浏览器授权读取本机截图目录</span>
+      <button id="captureButton" class="button button-primary" type="button">选择截图文件夹</button>
+      <input id="screenshotFolderInput" type="file" webkitdirectory directory multiple accept="image/png,image/jpeg,image/webp" hidden>
+    </section>
+
+    <section class="workspace">
+      <article id="screenshotPanel" class="panel screenshot-panel">
+        <div class="panel-heading">
+          <div>
+            <div class="eyebrow">SCREENSHOT IMPORT</div>
+            <h2>截图识别</h2>
+          </div>
+          <span id="pageBadge" class="badge">等待截图</span>
+        </div>
+        <div id="canvasFrame" class="canvas-frame">
+          <canvas id="screenshotCanvas" aria-label="截图预览"></canvas>
+          <div id="canvasPlaceholder" class="canvas-placeholder">
+            <div class="placeholder-icon">⌖</div>
+            <strong>等待游戏画面</strong>
+            <span>选择本机游戏截图文件夹后，截图会自动导入并识别</span>
+          </div>
+        </div>
+        <div id="captureHistory" class="capture-history" aria-label="最近截图记录"></div>
+        <p id="screenshotDirectoryStatus" class="muted capture-cache-note">尚未选择截图文件夹。截图只会在浏览器授权后读取。</p>
+        <p class="muted capture-cache-note">本机文件夹路径仅保存在当前浏览器；导入的截图与识别结果按玩家账号保存在服务端最近 10 条记录中。</p>
+        <div id="analysisSummary" class="analysis-summary" role="status" aria-live="polite">尚未识别页面</div>
+        <div id="screenshotCandidates" class="screenshot-candidates" hidden></div>
+      </article>
+
+      <article id="tasksPanel" class="panel tasks-panel">
+        <div class="panel-heading">
+          <div>
+            <div class="eyebrow">LOCAL QUEST TRACKER</div>
+            <h2>任务清单</h2>
+          </div>
+          <div class="task-header-actions">
+            <span id="taskCount" class="count-badge">0</span>
+            <button id="showHiddenTasksButton" class="button button-secondary button-small" type="button" aria-label="切换显示隐藏任务" aria-pressed="false" title="切换显示被钥匙筛选隐藏或手动隐藏的任务" disabled>切换隐藏</button>
+            <button id="clearTasksButton" class="button button-danger button-small" type="button" disabled>清空任务</button>
+          </div>
+        </div>
+        <div class="task-list-wrap">
+          <div class="task-filters" aria-label="任务筛选">
+            <label>商人<select id="taskTraderFilter" aria-label="按商人筛选"><option value="">全部商人</option></select></label>
+            <label>地图<select id="taskMapFilter" aria-label="按地图筛选"><option value="">全部地图</option></select></label>
+          </div>
+          <div id="taskRows" class="task-list"></div>
+          <div id="emptyTasks" class="empty-state">当前档案还没有任务。可以手动添加、从资料库导入，或在截图识别后核对候选。</div>
+        </div>
+        <details class="add-task-details">
+          <summary>手动添加任务</summary>
+          <form id="taskForm" class="task-form">
+            <label>商人<input name="trader" placeholder="例如 Therapist"></label>
+            <label>任务名称<input name="title" required placeholder="任务名称"></label>
+            <label class="wide-field">任务要求<textarea name="objective" rows="3" placeholder="每行填写一项要求，方便单独勾选进度"></textarea></label>
+            <label>目标物品<input name="item_name" placeholder="可选"></label>
+            <label>所需数量<input name="required_count" type="number" min="1" placeholder="不计数留空"></label>
+            <button class="button button-primary" type="submit">保存任务</button>
+          </form>
+        </details>
+        <details id="catalogPanel" class="catalog-details">
+          <summary>从 EFTarkov 任务资料库导入</summary>
+          <div class="catalog-controls">
+            <button id="catalogRefreshButton" class="button button-secondary" type="button">同步公开目录</button>
+            <input id="catalogSearch" type="search" placeholder="搜索任务名或商人" aria-label="搜索任务资料库">
+          </div>
+          <div id="catalogSummary" class="catalog-summary">尚未同步任务资料。</div>
+          <div id="catalogStatus" class="catalog-status" role="status"></div>
+          <div class="catalog-browser">
+            <div id="catalogResults" class="catalog-results" aria-label="任务资料搜索结果">
+              <div id="catalogEmpty" class="empty-state">先同步目录，再搜索要追踪的任务。</div>
+            </div>
+            <article id="catalogPreview" class="catalog-preview" hidden>
+              <div class="catalog-preview-heading">
+                <div>
+                  <div id="catalogTrader" class="eyebrow"></div>
+                  <h3 id="catalogTitle"></h3>
+                </div>
+                <button id="catalogImportButton" class="button button-primary" type="button" disabled>加入清单</button>
+              </div>
+              <ul id="catalogObjectives" class="catalog-objectives"></ul>
+              <a id="catalogSourceLink" target="_blank" rel="noopener noreferrer">打开 EFTarkov 来源页</a>
+            </article>
+          </div>
+          <p class="catalog-warning">来源页面标注版本不等于游戏补丁版本；覆盖情况未经官方逐项核对。资料只作为人工确认的候选，不会自动标记完成或修改进度。</p>
+        </details>
+      </article>
+    </section>
+
+    <section class="planning-grid" aria-label="任务备料计划">
+      <article id="keyPlannerPanel" class="panel planning-panel key-planner-panel">
+        <div class="panel-heading">
+          <div>
+            <div class="eyebrow">QUEST KEY CHECKLIST</div>
+            <h2>任务钥匙清单</h2>
+          </div>
+          <span id="keySummaryCount" class="count-badge">0 种</span>
+        </div>
+        <p id="keySummaryNote" class="planning-note">钥匙默认未勾选，勾选后显示关联任务及地图点位；新钥匙会提示确认是否已有。</p>
+        <div id="keySummaryRows" class="key-summary-rows"></div>
+      </article>
+
+    </section>
+
+    <section id="mapPlannerPanel" class="panel map-planner-panel">
+      <div class="panel-heading">
+        <div>
+          <div class="eyebrow">QUEST ROUTE PLANNER</div>
+          <h2>地图任务点位</h2>
+        </div>
+        <a id="mapSourceLink" class="map-source-link" target="_blank" rel="noopener noreferrer">EFTarkov 地图来源</a>
+      </div>
+      <div class="map-controls">
+        <label>地图<select id="mapSelect" aria-label="选择地图"></select></label>
+        <label class="map-floor-control">楼层<select id="mapFloorSelect" aria-label="选择楼层" disabled></select></label>
+        <div class="map-legend" aria-label="点位图例">
+          <span class="map-legend-item"><span class="map-legend-symbol" aria-hidden="true"></span>任务目标</span>
+          <span class="map-legend-item"><span class="map-legend-symbol is-visited" aria-hidden="true"></span>已到访</span>
+        </div>
+        <div class="map-view-actions" role="group" aria-label="地图视图控制">
+          <button id="mapDrawButton" class="button button-secondary button-small" type="button" aria-pressed="false" title="按住鼠标拖动绘制路线" disabled>划线</button>
+          <button id="mapUndoDrawingButton" class="button button-secondary button-small" type="button" disabled>撤销线条</button>
+          <button id="mapClearDrawingsButton" class="button button-secondary button-small" type="button" disabled>清除线条</button>
+          <button id="mapZoomOutButton" class="button button-secondary button-small" type="button" aria-label="缩小地图" title="缩小地图">−</button>
+          <output id="mapZoomLevel" class="map-zoom-level" aria-live="polite">100%</output>
+          <button id="mapZoomInButton" class="button button-secondary button-small" type="button" aria-label="放大地图" title="放大地图">＋</button>
+          <button id="mapZoomResetButton" class="button button-secondary button-small" type="button">重置</button>
+          <button id="mapFullscreenButton" class="button button-secondary button-small" type="button">全屏</button>
+        </div>
+      </div>
+      <div class="map-planner-layout">
+        <div class="map-main-column">
+          <div id="mapImageFrame" class="map-image-frame">
+            <div id="mapCanvas" class="map-canvas">
+              <img id="mapImage" alt="塔科夫地图底图" hidden>
+              <svg id="mapDrawings" class="map-drawings" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"></svg>
+              <div id="mapMarkers" class="map-markers"></div>
+            </div>
+            <div id="mapPlaceholder" class="map-placeholder">正在加载地图目录…</div>
+            <div id="mapTooltip" class="map-tooltip" role="tooltip" hidden></div>
+          </div>
+          <p id="mapHint" class="map-hint">左键查看点位信息，右键标记/取消已到访（标记右下角显示勾）；右侧可从要求链接查看点位，或单独隐藏该点。</p>
+        </div>
+        <aside class="map-targets-panel">
+          <div id="mapSummary" class="map-summary">选择地图后显示已追踪任务的自动点位。</div>
+          <div id="mapTargetList" class="map-target-list"></div>
+        </aside>
+      </div>
+      <p class="map-data-note">底图与任务目标坐标来自 EFTarkov 公开页面；地图仅显示任务目标，不标记钥匙用途位置。楼层切换只更换底图，标点始终显示该地图所有楼层的任务点，地点保留楼层名；右侧任务组的“隐藏/显示”会同步任务清单与地图点位，右键标点可切换到访勾选。</p>
+    </section>
+
+    <section class="hideout-upgrade-grid" aria-label="藏身处升级计划与材料">
+      <article id="hideoutPlannerPanel" class="panel planning-panel hideout-planner-panel">
+        <div class="panel-heading">
+          <div class="hideout-planner-title">
+            <h2>升级目标</h2>
+          </div>
+          <div class="hideout-planner-actions">
+            <button id="hideoutPlannerToggle" class="button button-secondary button-small" type="button" aria-expanded="true" aria-controls="hideoutPlannerContent">收起</button>
+            <button id="hideoutLevelsResetButton" class="button button-secondary button-small" type="button" title="清除所有设施的勾选和等级计划，不影响已有物品数量">等级清零</button>
+            <button id="hideoutRefreshButton" class="button button-secondary button-small" type="button">刷新资料</button>
+          </div>
+        </div>
+        <div id="hideoutPlannerContent">
+          <p id="hideoutStatus" class="planning-note" role="status">正在读取 PvE 藏身处升级资料…</p>
+          <div id="hideoutStations" class="hideout-stations"></div>
+        </div>
+      </article>
+      <article class="panel hideout-materials-bottom" aria-label="藏身处升级物品统计">
+        <details id="hideoutMaterialsPanel" class="hideout-materials-panel" open>
+          <summary class="hideout-materials-heading">
+            <div>
+              <div class="eyebrow">HIDEOUT MATERIALS</div>
+              <h2>升级物品统计</h2>
+            </div>
+            <span id="hideoutMaterialsCount" class="muted">需求 0 件 · 已有 0 件 · 尚缺 0 件</span>
+          </summary>
+          <div class="hideout-materials-content">
+            <div class="hideout-material-actions">
+              <button id="hideoutMaterialsResetButton" class="button button-secondary button-small" type="button">已有数量清零</button>
+            </div>
+            <div id="hideoutMaterialsScroll" class="hideout-materials-scroll">
+              <ul id="hideoutMaterials" class="hideout-materials"></ul>
+            </div>
+          </div>
+        </details>
+      </article>
+    </section>
+
+    <details id="diagnosticsPanel" class="panel diagnostics-panel">
+      <summary class="panel-heading diagnostics-heading">
+        <div>
+          <div class="eyebrow">TRACE & EVIDENCE</div>
+          <h2>识别诊断与日志</h2>
+        </div>
+        <span class="muted">高级信息</span>
+      </summary>
+      <div class="diagnostics-content">
+        <button id="refreshLogsButton" class="button button-secondary button-small" type="button">刷新日志</button>
+      <div class="diagnostic-columns">
+        <div>
+          <h3>本次分区与候选</h3>
+          <pre id="diagnosticDetails">等待分析结果</pre>
+        </div>
+        <div>
+          <h3>本地运行日志</h3>
+          <pre id="logLines">加载中…</pre>
+          <div id="logPath" class="muted log-path"></div>
+        </div>
+      </div>
+      <p class="privacy-note">截图仅在浏览器授权后从本机文件夹读取并上传到服务端，按玩家账号隔离，最多保留最近 10 次；待添加候选只保留任务文字资料直到加入清单。日志仅记录识别证据、操作和错误。</p>
+      </div>
+    </details>
+
+    <details id="operationHistoryPanel" class="panel operation-history-panel" aria-labelledby="operationHistoryTitle" open>
+      <summary class="panel-heading operation-history-heading">
+        <div>
+          <div class="eyebrow">RECENT ACTIONS</div>
+          <h2 id="operationHistoryTitle">处理记录</h2>
+        </div>
+        <span id="operationHistoryCount" class="muted">0 条</span>
+      </summary>
+      <ol id="operationHistoryList" class="operation-history-list" aria-live="polite">
+        <li class="operation-history-empty">暂无操作记录</li>
+      </ol>
+    </details>
+
+  </main>
+
+  <dialog id="mapPointImageDialog" class="map-point-image-dialog" aria-labelledby="mapPointImageTitle">
+    <div class="map-point-image-heading">
+      <div>
+        <div class="eyebrow">WAYPOINT IMAGE</div>
+        <h2 id="mapPointImageTitle">任务点位</h2>
+      </div>
+      <button id="closeMapPointImageButton" class="button button-secondary button-small" type="button">关闭</button>
+    </div>
+    <p id="mapPointImageDescription" class="map-point-image-description"></p>
+    <div class="map-point-image-frame">
+      <div id="mapPointImageGallery" class="map-point-image-gallery"></div>
+      <p id="mapPointImageUnavailable" class="muted" hidden>该点位没有可用的独立说明图片。</p>
+    </div>
+    <a id="mapPointImageSource" class="map-point-image-source" target="_blank" rel="noopener noreferrer" hidden>打开 EFTarkov 点位来源</a>
+  </dialog>
+
+  <dialog id="keyOwnershipDialog" class="key-ownership-dialog" aria-labelledby="keyOwnershipTitle">
+    <div class="key-ownership-heading">
+      <div>
+        <div class="eyebrow">QUEST KEY CHECK</div>
+        <h2 id="keyOwnershipTitle">确认是否已有这把钥匙</h2>
+      </div>
+      <button id="keyOwnershipLaterButton" class="button button-quiet button-small" type="button">稍后</button>
+    </div>
+    <div class="key-ownership-item">
+      <div class="key-ownership-image-wrap">
+        <img id="keyOwnershipImage" alt="" hidden>
+        <span id="keyOwnershipImageFallback" aria-hidden="true">🔑</span>
+      </div>
+      <div>
+        <strong id="keyOwnershipName"></strong>
+        <p id="keyOwnershipQuestion"></p>
+      </div>
+    </div>
+    <div class="key-ownership-actions">
+      <button id="keyOwnershipNoButton" class="button button-secondary" type="button">我还没有</button>
+      <button id="keyOwnershipYesButton" class="button button-primary" type="button">我有这把钥匙</button>
+    </div>
+  </dialog>
+
+  <dialog id="profileDialog" aria-labelledby="profileDialogTitle">
+    <form id="profileForm" class="dialog-form">
+      <div class="eyebrow">NEW PROFILE</div>
+      <h2 id="profileDialogTitle">新建游戏档案</h2>
+      <label>档案名称<input name="name" required placeholder="例如：主 PvE 档"></label>
+      <label>游戏模式
+        <select name="game_mode">
+          <option value="pve">PvE</option>
+          <option value="regular">PvP</option>
+          <option value="pvp-season">赛季 PvP</option>
+        </select>
+      </label>
+      <label id="seasonField" hidden>赛季编号<input name="season_id" placeholder="例如：2026"></label>
+      <div class="dialog-actions">
+        <button id="cancelProfileButton" class="button button-secondary" type="button">取消</button>
+        <button class="button button-primary" type="submit">创建档案</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status"></div>
+  <script src="/assets/app.js" defer></script>
+</body>
+</html>

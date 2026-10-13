@@ -48,6 +48,9 @@ jobs:
       - name: Check frontend JavaScript syntax
         run: node --check web/app.js
 
+      - name: Check mobile frontend JavaScript syntax
+        run: node --check web/mobile.js
+
   release:
     name: Build and publish Windows release
     if: startsWith(github.ref, 'refs/tags/v')
@@ -109,6 +112,16 @@ jobs:
               if (Test-Path $stdout) { Get-Content $stdout }
               if (Test-Path $stderr) { Get-Content $stderr }
               throw 'Packaged app did not return HTTP 200 on localhost:8765.'
+            }
+            $mobilePage = Invoke-WebRequest -Uri 'http://127.0.0.1:8765/mobile' -TimeoutSec 5 -UseBasicParsing
+            if ($mobilePage.StatusCode -ne 200 -or $mobilePage.Content -notmatch '/assets/mobile.js') {
+              throw 'Packaged mobile map page did not load its frontend.'
+            }
+            foreach ($asset in @('mobile.js', 'mobile.css')) {
+              $mobileAsset = Invoke-WebRequest -Uri "http://127.0.0.1:8765/assets/$asset" -TimeoutSec 5 -UseBasicParsing
+              if ($mobileAsset.StatusCode -ne 200) {
+                throw "Packaged mobile asset failed: $asset"
+              }
             }
           } finally {
             if (-not $process.HasExited) {

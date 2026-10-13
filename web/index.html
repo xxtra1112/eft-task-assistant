@@ -191,24 +191,38 @@
           <div class="eyebrow">QUEST ROUTE PLANNER</div>
           <h2>地图任务点位</h2>
         </div>
-        <a id="mapSourceLink" class="map-source-link" target="_blank" rel="noopener noreferrer">EFTarkov 地图来源</a>
+        <div class="map-heading-actions">
+          <a id="mapSourceLink" class="map-source-link" target="_blank" rel="noopener noreferrer">EFTarkov 地图来源</a>
+          <button id="mobileCompanionButton" class="button button-secondary button-small" type="button">手机地图二维码</button>
+        </div>
       </div>
       <div class="map-controls">
-        <label>地图<select id="mapSelect" aria-label="选择地图"></select></label>
-        <label class="map-floor-control">楼层<select id="mapFloorSelect" aria-label="选择楼层" disabled></select></label>
-        <div class="map-legend" aria-label="点位图例">
-          <span class="map-legend-item"><span class="map-legend-symbol" aria-hidden="true"></span>任务目标</span>
-          <span class="map-legend-item"><span class="map-legend-symbol is-visited" aria-hidden="true"></span>已到访</span>
+        <div class="map-select-controls">
+          <label>地图<select id="mapSelect" aria-label="选择地图"></select></label>
+          <label class="map-floor-control">楼层<select id="mapFloorSelect" aria-label="选择楼层" disabled></select></label>
+          <div id="mapAnnotationFilters" class="map-annotation-filters" role="group" aria-label="地图标注">
+            <span class="map-annotation-filter-title">地图标注</span>
+            <label class="map-annotation-toggle"><input type="checkbox" data-map-annotation-filter="location" checked><span class="annotation-swatch is-location" aria-hidden="true"></span>地图地点</label>
+            <label class="map-annotation-toggle"><input type="checkbox" data-map-annotation-filter="pmc-exit"><span class="annotation-swatch is-pmc" aria-hidden="true"></span>PMC撤离点</label>
+            <label class="map-annotation-toggle"><input type="checkbox" data-map-annotation-filter="scav-exit"><span class="annotation-swatch is-scav" aria-hidden="true"></span>SCAV撤离点</label>
+            <label class="map-annotation-toggle"><input type="checkbox" data-map-annotation-filter="transfer"><span class="annotation-swatch is-transfer" aria-hidden="true"></span>转移点</label>
+          </div>
         </div>
-        <div class="map-view-actions" role="group" aria-label="地图视图控制">
-          <button id="mapDrawButton" class="button button-secondary button-small" type="button" aria-pressed="false" title="按住鼠标拖动绘制路线" disabled>划线</button>
-          <button id="mapUndoDrawingButton" class="button button-secondary button-small" type="button" disabled>撤销线条</button>
-          <button id="mapClearDrawingsButton" class="button button-secondary button-small" type="button" disabled>清除线条</button>
-          <button id="mapZoomOutButton" class="button button-secondary button-small" type="button" aria-label="缩小地图" title="缩小地图">−</button>
-          <output id="mapZoomLevel" class="map-zoom-level" aria-live="polite">100%</output>
-          <button id="mapZoomInButton" class="button button-secondary button-small" type="button" aria-label="放大地图" title="放大地图">＋</button>
-          <button id="mapZoomResetButton" class="button button-secondary button-small" type="button">重置</button>
-          <button id="mapFullscreenButton" class="button button-secondary button-small" type="button">全屏</button>
+        <div class="map-display-controls">
+          <div class="map-legend" aria-label="点位图例">
+            <span class="map-legend-item"><span class="map-legend-symbol" aria-hidden="true"></span>任务目标</span>
+            <span class="map-legend-item"><span class="map-legend-symbol is-visited" aria-hidden="true"></span>已到访</span>
+          </div>
+          <div class="map-view-actions" role="group" aria-label="地图视图控制">
+            <button id="mapDrawButton" class="button button-secondary button-small" type="button" aria-pressed="false" title="按住鼠标拖动绘制路线" disabled>划线</button>
+            <button id="mapUndoDrawingButton" class="button button-secondary button-small" type="button" disabled>撤销线条</button>
+            <button id="mapClearDrawingsButton" class="button button-secondary button-small" type="button" disabled>清除线条</button>
+            <button id="mapZoomOutButton" class="button button-secondary button-small" type="button" aria-label="缩小地图" title="缩小地图">−</button>
+            <output id="mapZoomLevel" class="map-zoom-level" aria-live="polite">100%</output>
+            <button id="mapZoomInButton" class="button button-secondary button-small" type="button" aria-label="放大地图" title="放大地图">＋</button>
+            <button id="mapZoomResetButton" class="button button-secondary button-small" type="button">重置</button>
+            <button id="mapFullscreenButton" class="button button-secondary button-small" type="button">全屏</button>
+          </div>
         </div>
       </div>
       <div class="map-planner-layout">
@@ -229,7 +243,7 @@
           <div id="mapTargetList" class="map-target-list"></div>
         </aside>
       </div>
-      <p class="map-data-note">底图与任务目标坐标来自 EFTarkov 公开页面；地图仅显示任务目标，不标记钥匙用途位置。楼层切换只更换底图，标点始终显示该地图所有楼层的任务点，地点保留楼层名；右侧任务组的“隐藏/显示”会同步任务清单与地图点位，右键标点可切换到访勾选。</p>
+      <p class="map-data-note">底图、地点与撤离/转移点数据来自 EFTarkov 公开页面；可用上方开关筛选地图地点、PMC 撤离点、SCAV 撤离点和转移点。任务点位及标注保留楼层信息，任务隐藏会同步地图任务点位；右键任务标点可切换到访勾选。</p>
     </section>
 
     <section class="hideout-upgrade-grid" aria-label="藏身处升级计划与材料">
@@ -309,6 +323,25 @@
     </details>
 
   </main>
+
+  <dialog id="mobilePairingDialog" class="mobile-pairing-dialog" aria-labelledby="mobilePairingTitle">
+    <div class="mobile-pairing-heading">
+      <div>
+        <div class="eyebrow">MOBILE RAID MAP</div>
+        <h2 id="mobilePairingTitle">手机随身地图</h2>
+      </div>
+      <button id="closeMobilePairingButton" class="button button-secondary button-small" type="button">关闭</button>
+    </div>
+    <p class="mobile-pairing-intro">用手机扫描二维码即可进入，不需要再次登录。二维码两分钟内有效、只能使用一次；关闭窗口会撤销未使用的二维码。</p>
+    <div id="mobilePairingNotice" class="mobile-pairing-notice" role="status" hidden></div>
+    <div id="mobilePairingContent" class="mobile-pairing-content" hidden>
+      <label class="mobile-pairing-address">选择手机所在网络<select id="mobilePairingAddress" aria-label="选择局域网地址"></select></label>
+      <div id="mobilePairingQr" class="mobile-pairing-qr" aria-label="手机配对二维码"></div>
+      <p id="mobilePairingStatus" class="mobile-pairing-status" role="status"></p>
+      <p id="mobilePairingUrl" class="mobile-pairing-url"></p>
+      <button id="refreshMobilePairingButton" class="button button-secondary" type="button">重新生成二维码</button>
+    </div>
+  </dialog>
 
   <dialog id="mapPointImageDialog" class="map-point-image-dialog" aria-labelledby="mapPointImageTitle">
     <div class="map-point-image-heading">

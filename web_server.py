@@ -8,6 +8,7 @@ import math
 import mimetypes
 import os
 import re
+import socket
 import sys
 import threading
 import time
@@ -27,6 +28,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 import cv2
 import numpy as np
+import qrcode
 
 from catalog import (
     CatalogError,
@@ -39,7 +41,12 @@ from catalog import (
 )
 from diagnostics import configure_logging, log_event, log_path
 from hideout_data import get_hideout_catalog
-from players import Player, PlayerAuthStore
+from players import (
+    MOBILE_PAIRING_LIFETIME_SECONDS,
+    SESSION_LIFETIME_SECONDS,
+    Player,
+    PlayerAuthStore,
+)
 from recognition import MERCHANT_CARD_ORDER, PageAnalyzer, ScreenAnalysis, ScreenKind
 from storage import GAME_MODES, Profile, Task, TaskStore, default_database_path, normalize_text
 from task_requirements import filter_assault_weapon_items
@@ -128,6 +135,30 @@ def _point_image_urls(*values: Any) -> list[str]:
     return urls
 
 
+def _map_annotation_categories(marker: dict[str, Any]) -> list[str]:
+    marker_type = str(marker.get("marker_type", "")).strip().casefold()
+    category = str(marker.get("category", "")).strip().casefold()
+    category_path = str(marker.get("category_path", "")).strip().casefold()
+    icon_path = urlparse(str(marker.get("icon_url") or marker.get("icon") or "")).path.casefold()
+    if marker_type == "label":
+        return ["location"]
+    if marker_type != "point":
+        return []
+    if "撤离点 - pmc" in category_path or "extract_pmc" in icon_path:
+        return ["pmc-exit"]
+    if "撤离点 - scav" in category_path or "extract_scav" in icon_path:
+        return ["scav-exit"]
+    if "撤离点 - 转移点" in category_path or "extract_transit" in icon_path:
+        return ["transfer"]
+    if category == "pmc" and "出生点" not in category_path:
+        return ["pmc-exit"]
+    if category == "scav" and "出生点" not in category_path:
+        return ["scav-exit"]
+    if category == "转移点":
+        return ["transfer"]
+    return []
+
+
 class APIError(Exception):
     def __init__(self, message: str, status: int = 400) -> None:
         super().__init__(message)
@@ -142,6 +173,44 @@ def _profile_json(profile: Profile) -> dict[str, Any]:
 
 def _task_json(task: Task) -> dict[str, Any]:
     return asdict(task)
+
+
+def _mobile_lan_info(server: ThreadingHTTPServer) -> dict[str, Any]:
+    bound_host = str(server.server_address[0])
+    try:
+        bound_ip = ipaddress.ip_address(bound_host)
+    except ValueError:
+        bound_ip = None
+    if bound_ip is not None and bound_ip.version == 4 and bound_ip.is_unspecified:
+        addresses: set[str] = set()
+        try:
+            for result in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET, socket.SOCK_STREAM):
+                address = ipaddress.ip_address(result[4][0])
+                if address.is_private and not address.is_loopback and not address.is_link_local and not address.is_unspecified:
+                    addresses.add(str(address))
+        except OSError:
+            pass
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+                probe.connect(("192.0.2.1", 80))
+                address = ipaddress.ip_address(probe.getsockname()[0])
+                if address.is_private and not address.is_loopback and not address.is_link_local and not address.is_unspecified:
+                    addresses.add(str(address))
+        except OSError:
+            pass
+        lan_enabled = bool(addresses)
+    elif bound_ip is not None and bound_ip.version == 4 and bound_ip.is_private and not bound_ip.is_loopback and not bound_ip.is_link_local:
+        addresses = {str(bound_ip)}
+        lan_enabled = True
+    else:
+        addresses = set()
+        lan_enabled = False
+    return {
+        "lan_enabled": lan_enabled,
+        "addresses": sorted(addresses, key=lambda value: int(ipaddress.ip_address(value))),
+        "port": int(server.server_port),
+        "pairing_lifetime_seconds": MOBILE_PAIRING_LIFETIME_SECONDS,
+    }
 
 
 def _analysis_json(analysis: ScreenAnalysis | None) -> dict[str, Any] | None:
@@ -227,6 +296,7 @@ def _match_screenshot_task_candidates(
         if normalize_text(task.trader) == trader_key
     }
     matches_by_id: dict[str, dict[str, Any]] = {}
+    match_ranks: dict[str, tuple[float, float]] = {}
 
     ocr_lines = analysis.diagnostics.get("task_list_ocr", [])
     ordered_lines = sorted(
@@ -250,6 +320,22 @@ def _match_screenshot_task_candidates(
             continue
         if not normalized_text or ocr_confidence < SCREENSHOT_TASK_OCR_CONFIDENCE:
             continue
+
+        raw_bounds = line.get("bounds")
+        if not isinstance(raw_bounds, (list, tuple)) or len(raw_bounds) != 4:
+            continue
+        try:
+            x0, y0, x1, y1 = (int(value) for value in raw_bounds)
+        except (TypeError, ValueError):
+            continue
+        if x1 < x0 or y1 < y0:
+            continue
+        text_bounds = {
+            "x": x0,
+            "y": y0,
+            "width": x1 - x0,
+            "height": y1 - y0,
+        }
 
         ranked: list[tuple[float, dict[str, Any]]] = []
         for catalog_task in catalog_tasks:
@@ -298,9 +384,8 @@ def _match_screenshot_task_candidates(
         if normalize_text(str(best_task.get("title", ""))) in tracked_titles:
             continue
 
-        bounds = line.get("bounds", [])
-        image_y = int(bounds[1]) if isinstance(bounds, (list, tuple)) and len(bounds) > 1 else 0
-        image_x = int(bounds[0]) if isinstance(bounds, (list, tuple)) and bounds else 0
+        image_y = text_bounds["y"]
+        image_x = text_bounds["x"]
         candidate = {
             "capture_id": capture_id,
             "profile_id": profile_id,
@@ -315,22 +400,15 @@ def _match_screenshot_task_candidates(
             "match_score": round(best_score, 3),
             "match_type": "exact" if best_score == 1.0 else "fuzzy",
             "match_region": "task_list",
+            "bounds": text_bounds,
             "image_y": image_y,
             "image_x": image_x,
         }
         existing = matches_by_id.get(source_task_id)
-        if existing is None:
+        candidate_rank = (best_score, ocr_confidence)
+        if existing is None or candidate_rank > match_ranks[source_task_id]:
             matches_by_id[source_task_id] = candidate
-        else:
-            candidate_position = (image_y, image_x)
-            existing_position = (existing.get("image_y", image_y), existing.get("image_x", image_x))
-            if (best_score, ocr_confidence) > (
-                existing["match_score"], existing["ocr_confidence"]
-            ):
-                candidate["image_y"], candidate["image_x"] = min(candidate_position, existing_position)
-                matches_by_id[source_task_id] = candidate
-            elif candidate_position < existing_position:
-                existing["image_y"], existing["image_x"] = candidate_position
+            match_ranks[source_task_id] = candidate_rank
 
     ordered_candidates = sorted(
         matches_by_id.values(),
@@ -665,15 +743,16 @@ class AssistantState:
                     name = str(item.get("name", "")).strip()
                     if not is_key_item_name(name):
                         continue
+                    item_id = str(item.get("item_id", "")).strip().lower()
                     key_requirements.append(
                         {
                             **item,
                             "name": name or "未命名钥匙",
                             "item_kind": "key",
-                            "item_id": str(item.get("item_id", "")).strip(),
+                            "item_id": item_id,
                             "image_url": (
-                                f"https://assets.tarkov.dev/{str(item.get('item_id', '')).lower()}-icon.webp"
-                                if re.fullmatch(r"[0-9a-f]{24}", str(item.get("item_id", "")), re.I)
+                                f"https://assets.tarkov.dev/{item_id}-icon.webp"
+                                if re.fullmatch(r"[0-9a-f]{24}", item_id, re.I)
                                 else ""
                             ),
                         }
@@ -1766,6 +1845,93 @@ class AssistantState:
                     "visited": api_marker_id in visited_marker_ids,
                 }
             )
+        annotation_labels = {
+            "location": "地图地点",
+            "pmc-exit": "PMC撤离点",
+            "scav-exit": "SCAV撤离点",
+            "transfer": "转移点",
+        }
+        annotations_by_key: dict[tuple[Any, ...], dict[str, Any]] = {}
+        for source_marker in config["markers"]:
+            categories = _map_annotation_categories(source_marker)
+            if not categories or source_marker.get("display_title") is not True:
+                continue
+            source_marker_id = str(source_marker.get("id", "")).strip()
+            if not source_marker_id or source_marker_id.lower() in linked_marker_ids:
+                continue
+            point_floor = next(
+                (item for item in config["floors"] if item["key"] == str(source_marker.get("floor_key", ""))),
+                None,
+            )
+            if point_floor is None:
+                continue
+            try:
+                x = float(source_marker["x"])
+                y = float(source_marker["y"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if not math.isfinite(x) or not math.isfinite(y):
+                continue
+            title = str(source_marker.get("title", "")).strip()
+            if not title:
+                continue
+            source_page_url = f"{config['source_url']}?marker={source_marker_id}"
+            source_image_urls = _point_image_urls(
+                source_marker.get("info_image_urls"),
+                source_marker.get("info_image_url"),
+            )
+            icon_url = str(source_marker.get("icon_url", ""))
+            category = categories[0]
+            if category == "location":
+                annotation_key = (category, source_marker_id)
+            else:
+                annotation_key = (
+                    "exit",
+                    point_floor["key"],
+                    normalize_text(title),
+                    round(x, 1),
+                    round(y, 1),
+                )
+            annotation = annotations_by_key.get(annotation_key)
+            if annotation is None:
+                annotation = {
+                    "id": f"eftarkov-map-{source_marker_id}",
+                    "categories": [],
+                    "category_labels": {},
+                    "icon_urls": {},
+                    "title": title,
+                    "floor_key": point_floor["key"],
+                    "floor_name": point_floor["name"],
+                    "description": str(source_marker.get("description", "")),
+                    "x_percent": x / point_floor["width"] * 100,
+                    "y_percent": y / point_floor["height"] * 100,
+                    "source_url": source_page_url,
+                    "source_page_url": source_page_url,
+                    "source_page_urls": [],
+                    "source_image_urls": [],
+                    "display_title": source_marker.get("display_title") is True,
+                }
+                annotations_by_key[annotation_key] = annotation
+            if category not in annotation["categories"]:
+                annotation["categories"].append(category)
+                annotation["category_labels"][category] = annotation_labels[category]
+            if icon_url:
+                annotation["icon_urls"].setdefault(category, icon_url)
+            if source_page_url not in annotation["source_page_urls"]:
+                annotation["source_page_urls"].append(source_page_url)
+            for image_url in source_image_urls:
+                if image_url not in annotation["source_image_urls"]:
+                    annotation["source_image_urls"].append(image_url)
+            if category == "pmc-exit" and "scav-exit" in annotation["categories"]:
+                annotation["annotation_label"] = "PMC / SCAV撤离点"
+            elif category == "scav-exit" and "pmc-exit" in annotation["categories"]:
+                annotation["annotation_label"] = "PMC / SCAV撤离点"
+            else:
+                annotation["annotation_label"] = annotation_labels[category]
+        annotations = list(annotations_by_key.values())
+        for annotation in annotations:
+            annotation["categories"].sort(key=("pmc-exit", "scav-exit", "transfer", "location").index)
+
         return {
             "map_id": config["map_id"],
             "map_name": config["name"],
@@ -1773,6 +1939,7 @@ class AssistantState:
             "floors": floors,
             "image_url": f"/api/map/image?{urlencode({'map_id': config['map_id'], 'floor': floor['key']})}",
             "markers": markers,
+            "annotations": annotations,
             "detail_warnings": detail_warnings,
             "tasks": [
                 {"id": task.id, "title": task.title, "trader": task.trader}
@@ -1940,7 +2107,30 @@ def _make_handler(state: PlayerStateManager) -> type[BaseHTTPRequestHandler]:
             player = self._current_player()
             if player is None:
                 raise APIError("请先登录玩家账号。", 401)
+            scope = state.auth.session_scope(self._session_token())
+            if scope == "mobile" and not self._mobile_api_allowed():
+                raise APIError("手机会话仅可访问地图和任务进度接口。", 403)
             return player
+
+        def _mobile_api_allowed(self) -> bool:
+            path = urlparse(self.path).path
+            if self.command == "GET":
+                return path in {
+                    "/api/mobile/state",
+                    "/api/maps",
+                    "/api/map",
+                    "/api/map/image",
+                }
+            if self.command != "POST":
+                return False
+            if path == "/api/map/markers/visit":
+                return True
+            parts = path.strip("/").split("/")
+            if len(parts) == 5 and parts[:2] == ["api", "tasks"] and parts[3] == "requirements":
+                return parts[2].isdigit() and parts[4].isdigit()
+            if len(parts) == 6 and parts[:2] == ["api", "tasks"] and parts[3] == "requirements" and parts[5] == "count":
+                return parts[2].isdigit() and parts[4].isdigit()
+            return False
 
         @staticmethod
         def _session_cookie(token: str, max_age: int) -> tuple[str, str]:
@@ -2013,10 +2203,16 @@ def _make_handler(state: PlayerStateManager) -> type[BaseHTTPRequestHandler]:
             try:
                 if path == "/":
                     self._send_static("index.html")
+                elif path == "/mobile":
+                    self._send_static("mobile.html")
                 elif path == "/assets/app.js":
                     self._send_static("app.js")
                 elif path == "/assets/styles.css":
                     self._send_static("styles.css")
+                elif path == "/assets/mobile.js":
+                    self._send_static("mobile.js")
+                elif path == "/assets/mobile.css":
+                    self._send_static("mobile.css")
                 elif path == "/favicon.ico":
                     self.send_response(204)
                     self.send_header("Cache-Control", "no-store")
@@ -2034,7 +2230,20 @@ def _make_handler(state: PlayerStateManager) -> type[BaseHTTPRequestHandler]:
                 else:
                     player = self._require_player()
                     assistant = state.state_for(player)
-                    if path == "/api/state":
+                    if path == "/api/mobile/info":
+                        self._send_json(200, _mobile_lan_info(self.server))
+                    elif path == "/api/mobile/state":
+                        snapshot = assistant.snapshot()
+                        self._send_json(
+                            200,
+                            {
+                                "player": snapshot["player"],
+                                "profiles": snapshot["profiles"],
+                                "selected_profile_id": snapshot["selected_profile_id"],
+                                "tasks": snapshot["tasks"],
+                            },
+                        )
+                    elif path == "/api/state":
                         self._send_json(200, assistant.snapshot())
                     elif path == "/api/screenshot":
                         query = parse_qs(urlparse(self.path).query)
@@ -2126,6 +2335,21 @@ def _make_handler(state: PlayerStateManager) -> type[BaseHTTPRequestHandler]:
                         (self._session_cookie(token, 30 * 24 * 60 * 60),),
                     )
                     return
+                if path == "/api/auth/mobile-pair":
+                    result = state.auth.consume_mobile_pairing_token(
+                        str(payload.get("token", ""))
+                    )
+                    if result is None:
+                        raise APIError("二维码已过期或已使用，请从电脑重新生成。", 401)
+                    player, token = result
+                    state.state_for(player)
+                    log_event("mobile_device_paired", player_id=player.id)
+                    self._send_json(
+                        200,
+                        {"player": player.public_data()},
+                        (self._session_cookie(token, SESSION_LIFETIME_SECONDS),),
+                    )
+                    return
                 if path == "/api/auth/login":
                     try:
                         result = state.auth.login(
@@ -2156,7 +2380,41 @@ def _make_handler(state: PlayerStateManager) -> type[BaseHTTPRequestHandler]:
                     return
                 player = self._require_player()
                 assistant = state.state_for(player)
-                if path == "/api/captures/select":
+                if path == "/api/mobile/pairing":
+                    network = _mobile_lan_info(self.server)
+                    if not network["lan_enabled"]:
+                        raise APIError(
+                            "手机扫码需要局域网监听。请设置 EFT_TASK_ASSISTANT_HOST=0.0.0.0 后重启服务。",
+                            409,
+                        )
+                    try:
+                        address = str(ipaddress.IPv4Address(str(payload.get("address", ""))))
+                    except ipaddress.AddressValueError as error:
+                        raise APIError("请选择有效的局域网 IPv4 地址。") from error
+                    if address not in network["addresses"]:
+                        raise APIError("所选地址不属于当前服务的局域网地址。", 403)
+                    token, expires_at = state.auth.create_mobile_pairing_token(player.id)
+                    mobile_url = f"http://{address}:{network['port']}/mobile#pair={token}"
+                    qr_code = qrcode.QRCode(
+                        error_correction=qrcode.constants.ERROR_CORRECT_M,
+                        border=4,
+                    )
+                    qr_code.add_data(mobile_url)
+                    qr_code.make(fit=True)
+                    matrix = [[bool(module) for module in row] for row in qr_code.get_matrix()]
+                    self._send_json(
+                        201,
+                        {
+                            "url": mobile_url,
+                            "matrix": matrix,
+                            "expires_at": expires_at,
+                            "expires_in": network["pairing_lifetime_seconds"],
+                        },
+                    )
+                elif path == "/api/mobile/pairing/cancel":
+                    state.auth.cancel_mobile_pairing_tokens(player.id)
+                    self._send_json(200, {"cancelled": True})
+                elif path == "/api/captures/select":
                     assistant.select_capture(str(payload.get("capture_id", "")))
                     self._send_json(200, {"selected": payload.get("capture_id")})
                 elif path == "/api/tasks/restore":

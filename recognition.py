@@ -77,6 +77,9 @@ CARD_X_STEP = 0.066
 CARD_WIDTH = 0.062
 CARD_LABEL_REGION = (0.14, 0.207)
 TRADER_NAME_LABEL_REGION = (0.135, 0.163)
+OCR_REFERENCE_HEIGHT = 1440
+OCR_MIN_SCALE = 0.5
+OCR_MAX_SCALE = 2.0
 
 
 def _normalize(value: str) -> str:
@@ -102,6 +105,12 @@ class PageAnalyzer:
         return self._ocr
 
     @staticmethod
+    def _ocr_scale(image_height: int) -> float:
+        if image_height <= 0:
+            raise ValueError("image height must be positive")
+        return max(OCR_MIN_SCALE, min(OCR_MAX_SCALE, OCR_REFERENCE_HEIGHT / image_height))
+
+    @staticmethod
     def _crop_bounds(
         image: np.ndarray, bounds: tuple[float, float, float, float]
     ) -> tuple[np.ndarray, tuple[int, int, int, int]]:
@@ -119,6 +128,16 @@ class PageAnalyzer:
         region: str,
     ) -> list[OCRLine]:
         crop, (left, top, _, _) = self._crop_bounds(image, bounds)
+        scale = self._ocr_scale(image.shape[0])
+        scale_x = scale_y = 1.0
+        if scale != 1.0:
+            import cv2
+
+            interpolation = cv2.INTER_CUBIC if scale > 1.0 else cv2.INTER_AREA
+            original_height, original_width = crop.shape[:2]
+            crop = cv2.resize(crop, None, fx=scale, fy=scale, interpolation=interpolation)
+            scale_x = crop.shape[1] / original_width
+            scale_y = crop.shape[0] / original_height
         variants = [crop]
         if region == "task_list":
             import cv2
@@ -137,10 +156,10 @@ class PageAnalyzer:
                     continue
                 try:
                     points = np.asarray(row[0], dtype=float).reshape(-1, 2)
-                    x0 = int(round(float(points[:, 0].min()))) + left
-                    y0 = int(round(float(points[:, 1].min()))) + top
-                    x1 = int(round(float(points[:, 0].max()))) + left
-                    y1 = int(round(float(points[:, 1].max()))) + top
+                    x0 = int(round(float(points[:, 0].min()) / scale_x)) + left
+                    y0 = int(round(float(points[:, 1].min()) / scale_y)) + top
+                    x1 = int(round(float(points[:, 0].max()) / scale_x)) + left
+                    y1 = int(round(float(points[:, 1].max()) / scale_y)) + top
                     confidence = float(row[2]) if len(row) > 2 else 0.0
                 except (TypeError, ValueError, IndexError):
                     continue
@@ -309,6 +328,12 @@ class PageAnalyzer:
             "regions": {
                 "top_tabs": list(TRADER_TASK_TAB_REGION),
                 "task_list": list(TASK_LIST_REGION),
+            },
+            "ocr_normalization": {
+                "reference_height": OCR_REFERENCE_HEIGHT,
+                "scale": round(self._ocr_scale(height), 4),
+                "minimum_scale": OCR_MIN_SCALE,
+                "maximum_scale": OCR_MAX_SCALE,
             },
             "trader_card_scores": card_scores,
             "trader_card_decision": card_reason,

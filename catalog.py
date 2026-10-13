@@ -526,6 +526,14 @@ def _fetch_eftarkov_map_data(map_id: str, game_mode: str) -> dict[str, Any]:
         task_id = str(marker.get("task_id") or "").lower()
         if task_id and not TASK_ID_PATTERN.fullmatch(task_id):
             task_id = ""
+        map_icon = urlparse(urljoin(EFTARKOV_ROOT, str(marker.get("icon") or "")))
+        icon_url = (
+            map_icon.geturl()
+            if map_icon.scheme == "https"
+            and map_icon.netloc == "www.eftarkov.com"
+            and re.fullmatch(r"/uploads/mapIcon/[A-Za-z0-9._-]+\.(?:svg|png|jpe?g|webp)", map_icon.path, re.I)
+            else ""
+        )
         markers.append(
             {
                 "id": str(marker.get("id", "")),
@@ -534,6 +542,10 @@ def _fetch_eftarkov_map_data(map_id: str, game_mode: str) -> dict[str, Any]:
                 "title": str(marker.get("title", "")),
                 "description": str(marker.get("description", "")),
                 "marker_type": str(marker.get("marker_type", "point")),
+                "category": str(marker.get("category", "")),
+                "category_path": str(marker.get("category_path", "")),
+                "icon_url": icon_url,
+                "display_title": marker.get("display_title") is True,
                 "info_image_url": image_url,
                 "info_image_urls": info_image_urls,
                 "x": x,

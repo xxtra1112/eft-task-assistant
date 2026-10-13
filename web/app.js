@@ -80,8 +80,19 @@ const elements = {
   catalogSourceLink: document.querySelector("#catalogSourceLink"),
   catalogImport: document.querySelector("#catalogImportButton"),
   mapPlannerPanel: document.querySelector("#mapPlannerPanel"),
+  mobileCompanionButton: document.querySelector("#mobileCompanionButton"),
+  mobilePairingDialog: document.querySelector("#mobilePairingDialog"),
+  closeMobilePairingButton: document.querySelector("#closeMobilePairingButton"),
+  mobilePairingNotice: document.querySelector("#mobilePairingNotice"),
+  mobilePairingContent: document.querySelector("#mobilePairingContent"),
+  mobilePairingAddress: document.querySelector("#mobilePairingAddress"),
+  mobilePairingQr: document.querySelector("#mobilePairingQr"),
+  mobilePairingStatus: document.querySelector("#mobilePairingStatus"),
+  mobilePairingUrl: document.querySelector("#mobilePairingUrl"),
+  refreshMobilePairingButton: document.querySelector("#refreshMobilePairingButton"),
   mapSelect: document.querySelector("#mapSelect"),
   mapFloorSelect: document.querySelector("#mapFloorSelect"),
+  mapAnnotationFilters: document.querySelector("#mapAnnotationFilters"),
   mapImageFrame: document.querySelector("#mapImageFrame"),
   mapDrawings: document.querySelector("#mapDrawings"),
   mapDrawButton: document.querySelector("#mapDrawButton"),
@@ -200,6 +211,48 @@ const UI_TRANSLATIONS = Object.freeze({
   "0 种": "0 types",
   "钥匙默认未勾选，勾选后显示关联任务及地图点位；新钥匙会提示确认是否已有。": "Keys start unchecked. Check one to show related quests and map points. New keys prompt you to confirm whether you own them.",
   "EFTarkov 地图来源": "EFTarkov map source",
+  "地图标注": "Map annotations",
+  "地图地点": "Map locations",
+  "PMC撤离点": "PMC extracts",
+  "SCAV撤离点": "SCAV extracts",
+  "转移点": "Transit points",
+  "地点": "Locations",
+  "PMC撤离": "PMC extracts",
+  "SCAV撤离": "SCAV extracts",
+  "左键编号标记查看点位信息，右键切换到访勾选（勾显示在标记右下角）；右侧可隐藏单个点或查看全部说明图片。悬停撤离/转移标记可立即查看名称和楼层。": "Left-click numbered markers for point details; right-click to toggle visited status (the check appears at the marker's bottom-right). Hide individual points or view all source images in the list. Hover over extract/transit markers for instant names and floor details.",
+  "悬停撤离/转移点立即查看名称和楼层；点击标记查看来源图片。": "Hover over extract/transit points for instant names and floor details; click a marker to view source images.",
+  "底图、地点与撤离/转移点数据来自 EFTarkov 公开页面；可用上方开关筛选地图地点、PMC 撤离点、SCAV 撤离点和转移点。任务点位及标注保留楼层信息，任务隐藏会同步地图任务点位；右键任务标点可切换到访勾选。": "Basemap, locations, extraction points, and transit points come from EFTarkov. Use the switches above to filter locations, PMC/SCAV extracts, and transit points. Quest markers and annotations retain floor details; hiding a quest also hides its quest markers. Right-click quest markers to toggle visited status.",
+  "手机地图二维码": "Mobile map QR code",
+  "MOBILE RAID MAP": "MOBILE RAID MAP",
+  "手机随身地图": "Mobile raid map",
+  "用手机扫描二维码即可进入，不需要再次登录。二维码两分钟内有效、只能使用一次；关闭窗口会撤销未使用的二维码。": "Scan with your phone to open the map without signing in again. The QR code expires in two minutes and works once; closing this dialog revokes an unused code.",
+  "选择手机所在网络": "Choose the network used by your phone",
+  "选择局域网地址": "Choose LAN address",
+  "重新生成二维码": "Generate a new QR code",
+  "手机访问地址：": "Phone address: ",
+  "二维码有效期：": "QR code expires in: ",
+  "秒": "s",
+  "手机扫码需要局域网监听。请设置 EFT_TASK_ASSISTANT_HOST=0.0.0.0 后重启服务。": "LAN listening is required for phone pairing. Set EFT_TASK_ASSISTANT_HOST=0.0.0.0 and restart the service.",
+  "当前没有可用的局域网 IPv4 地址。": "No usable LAN IPv4 address was found.",
+  "正在查找局域网地址…": "Looking for LAN addresses…",
+  "正在生成二维码…": "Generating QR code…",
+  "二维码已过期，请重新生成。": "The QR code expired. Generate a new one.",
+  "二维码有效期：": "QR code expires in: ",
+  "扫描后手机将自动进入地图，无需输入账号或密码。": "After scanning, your phone opens the map automatically without a username or password.",
+  "选择地址后生成二维码。": "Choose an address to generate a QR code.",
+  "当前档案还没有任务。": "There are no quests in the current profile.",
+  "任务地图载入失败。": "The quest map could not be loaded.",
+  "请从电脑端扫描手机地图二维码进入，无需再次登录。": "Scan the mobile map QR code from your computer to continue without signing in again.",
+  "二维码无效或已过期，请回到电脑端重新生成。": "This QR code is invalid or expired. Generate another one on your computer.",
+  "当前没有可用的地图点位。": "There are no map markers to show.",
+  "已到访": "Visited",
+  "可选": "Optional",
+  "已完成": "Complete",
+  "标记已到访": "Mark visited",
+  "取消已到访标记": "Clear visited status",
+  "查看来源": "View source",
+  "退出手机会话": "Sign out of mobile session",
+  "没有找到对应任务。": "The related quest was not found.",
   "选择地图": "Select map",
   "楼层": "Floor",
   "选择楼层": "Select floor",
@@ -538,6 +591,7 @@ let clearTasksBusy = false;
 let operationUndoBusy = false;
 let loadedCaptureId = null;
 let sourceImage = null;
+let drawnScreenshotOverlayKey = "";
 let screenshotFolderHandle = null;
 let screenshotFolderOwnerId = null;
 let screenshotFolderName = "";
@@ -558,6 +612,11 @@ let catalogImportBusy = false;
 let catalogQueryGeneration = 0;
 let mapView = null;
 let mapViewGeneration = 0;
+let mobilePairingTimer = null;
+let mobilePairingExpiresAt = 0;
+let mobilePairingGeneration = 0;
+let mobilePairingActive = false;
+let mobilePairingQueue = Promise.resolve();
 let mapPointImageUrls = [];
 let mapDetailWarnings = [];
 let mapTaskIdsByMap = new Map();
@@ -570,6 +629,7 @@ const collapsedMapTaskGroups = new Set();
 const collapsedTaskIds = new Set();
 let taskKeyIdsByTask = new Map();
 let keySummaryEntries = [];
+let keySummaryRenderSignature = "";
 let activeKeyOwnershipId = "";
 const deferredKeyOwnershipIds = new Set();
 let showHiddenTasks = false;
@@ -612,6 +672,12 @@ function defaultUiPreferences() {
     version: UI_PREFERENCE_VERSION,
     selectedMapId: "",
     selectedMapFloors: {},
+    mapAnnotationVisibility: {
+      location: true,
+      "pmc-exit": false,
+      "scav-exit": false,
+      transfer: false,
+    },
     taskTraderFilter: "",
     taskMapFilter: "",
     mapZoom: 1,
@@ -695,6 +761,12 @@ function readUiPreferences(scopeId, legacyProfileId = null) {
         : {},
       taskTraderFilter: typeof parsed.taskTraderFilter === "string" ? parsed.taskTraderFilter : "",
       taskMapFilter: typeof parsed.taskMapFilter === "string" ? parsed.taskMapFilter : "",
+      mapAnnotationVisibility: Object.fromEntries(Object.keys(defaults.mapAnnotationVisibility).map((key) => [
+        key,
+        typeof parsed.mapAnnotationVisibility?.[key] === "boolean"
+          ? parsed.mapAnnotationVisibility[key]
+          : defaults.mapAnnotationVisibility[key],
+      ])),
       mapZoom: Number.isFinite(zoom) ? Math.min(MAP_ZOOM_MAX, Math.max(MAP_ZOOM_MIN, zoom)) : 1,
       hiddenTaskIds: Array.isArray(parsed.hiddenTaskIds || parsed.hiddenMapTaskIds)
         ? [...new Set((parsed.hiddenTaskIds || parsed.hiddenMapTaskIds).filter((key) => typeof key === "string" && key.length <= 240))].slice(-500)
@@ -797,6 +869,10 @@ function saveUiPreferences() {
   uiPreferences.taskTraderFilter = elements.taskTraderFilter.value;
   uiPreferences.taskMapFilter = elements.taskMapFilter.value;
   uiPreferences.mapZoom = mapZoom;
+  uiPreferences.mapAnnotationVisibility = Object.fromEntries(
+    [...elements.mapAnnotationFilters.querySelectorAll("input[data-map-annotation-filter]")]
+      .map((input) => [input.dataset.mapAnnotationFilter, input.checked]),
+  );
   uiPreferences.hiddenTaskIds = [...hiddenTaskIds];
   uiPreferences.showHiddenTasks = showHiddenTasks;
   uiPreferences.hiddenMapPointIds = [...hiddenMapPointIds];
@@ -1092,10 +1168,11 @@ function activateProfileUiPreferences(playerId, profileId, isAdmin = false) {
   elements.addTaskPanel.open = uiPreferences.panels.addTask;
   elements.catalogPanel.open = uiPreferences.panels.catalog;
   elements.diagnosticsPanel.open = uiPreferences.panels.diagnostics;
-  elements.hideoutPlannerContent.hidden = !uiPreferences.hideoutPlannerOpen;
-  elements.hideoutPlannerToggle.textContent = uiPreferences.hideoutPlannerOpen ? "收起" : "展开";
-  elements.hideoutPlannerToggle.setAttribute("aria-expanded", String(uiPreferences.hideoutPlannerOpen));
-  elements.hideoutMaterialsPanel.open = uiPreferences.hideoutMaterialsOpen;
+  elements.mapAnnotationFilters.querySelectorAll("input[data-map-annotation-filter]").forEach((input) => {
+    input.checked = uiPreferences.mapAnnotationVisibility[input.dataset.mapAnnotationFilter] !== false;
+  });
+  const hideoutSectionsOpen = uiPreferences.hideoutPlannerOpen && uiPreferences.hideoutMaterialsOpen;
+  setHideoutSectionsOpen(hideoutSectionsOpen, false);
   elements.operationHistoryPanel.open = uiPreferences.operationHistoryOpen;
   setMapZoom(uiPreferences.mapZoom, false);
   setMapDrawingMode(false);
@@ -1128,6 +1205,146 @@ async function request(path, options = {}) {
 
 function post(path, payload = {}) {
   return request(path, { method: "POST", body: JSON.stringify(payload) });
+}
+
+function setMobilePairingNotice(message, kind = "info") {
+  elements.mobilePairingNotice.textContent = message;
+  elements.mobilePairingNotice.dataset.kind = kind;
+  elements.mobilePairingNotice.hidden = !message;
+  elements.mobilePairingContent.hidden = true;
+}
+
+function drawMobilePairingQr(matrix) {
+  if (!Array.isArray(matrix) || !matrix.length || matrix.some((row) => !Array.isArray(row) || row.length !== matrix.length)) {
+    throw new Error("二维码数据格式无效。请重新生成。");
+  }
+  const size = matrix.length;
+  const paths = [];
+  matrix.forEach((row, y) => {
+    let start = -1;
+    for (let x = 0; x <= size; x += 1) {
+      if (x < size && row[x]) {
+        if (start < 0) start = x;
+      } else if (start >= 0) {
+        paths.push(`M${start} ${y}h${x - start}v1h-${x - start}z`);
+        start = -1;
+      }
+    }
+  });
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", `0 0 ${size} ${size}`);
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", "手机地图配对二维码");
+  const background = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  background.setAttribute("width", String(size));
+  background.setAttribute("height", String(size));
+  background.setAttribute("fill", "#fff");
+  const modules = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  modules.setAttribute("d", paths.join(""));
+  modules.setAttribute("fill", "#111214");
+  modules.setAttribute("shape-rendering", "crispEdges");
+  svg.append(background, modules);
+  elements.mobilePairingQr.replaceChildren(svg);
+}
+
+function updateMobilePairingCountdown() {
+  const remaining = Math.max(0, Math.ceil((mobilePairingExpiresAt - Date.now()) / 1000));
+  if (!remaining) {
+    clearInterval(mobilePairingTimer);
+    mobilePairingTimer = null;
+    elements.mobilePairingStatus.textContent = "二维码已过期，请重新生成。";
+    return;
+  }
+  elements.mobilePairingStatus.textContent = `${translateUiText("二维码有效期：")}${remaining} ${translateUiText("秒")}`;
+}
+
+function generateMobilePairing() {
+  const generation = ++mobilePairingGeneration;
+  clearInterval(mobilePairingTimer);
+  mobilePairingTimer = null;
+  mobilePairingActive = true;
+  elements.refreshMobilePairingButton.disabled = true;
+  elements.mobilePairingQr.replaceChildren();
+  elements.mobilePairingUrl.textContent = "";
+  const operation = mobilePairingQueue.then(async () => {
+    if (!elements.mobilePairingDialog.open || generation !== mobilePairingGeneration) return;
+    elements.mobilePairingStatus.textContent = "正在生成二维码…";
+    try {
+      await post("/api/mobile/pairing/cancel");
+      if (!elements.mobilePairingDialog.open || generation !== mobilePairingGeneration) return;
+      const result = await post("/api/mobile/pairing", { address: elements.mobilePairingAddress.value });
+      if (!elements.mobilePairingDialog.open) {
+        await post("/api/mobile/pairing/cancel").catch(() => {});
+        return;
+      }
+      if (generation !== mobilePairingGeneration) return;
+      drawMobilePairingQr(result.matrix);
+      elements.mobilePairingUrl.textContent = result.url;
+      mobilePairingExpiresAt = Date.now() + Number(result.expires_in || 120) * 1000;
+      mobilePairingActive = true;
+      elements.mobilePairingNotice.hidden = true;
+      elements.mobilePairingContent.hidden = false;
+      updateMobilePairingCountdown();
+      mobilePairingTimer = setInterval(updateMobilePairingCountdown, 1000);
+    } catch (error) {
+      if (generation === mobilePairingGeneration && elements.mobilePairingDialog.open) {
+        setMobilePairingNotice(error.message, "error");
+        elements.mobilePairingContent.hidden = false;
+      }
+    } finally {
+      if (generation === mobilePairingGeneration) elements.refreshMobilePairingButton.disabled = false;
+    }
+  });
+  mobilePairingQueue = operation.catch(() => {});
+  return operation;
+}
+
+async function openMobilePairing() {
+  if (!elements.mobilePairingDialog.open) elements.mobilePairingDialog.showModal();
+  setMobilePairingNotice("正在查找局域网地址…");
+  elements.mobilePairingQr.replaceChildren();
+  elements.mobilePairingUrl.textContent = "";
+  try {
+    const network = await request("/api/mobile/info");
+    if (!elements.mobilePairingDialog.open) return;
+    if (!network.lan_enabled) {
+      setMobilePairingNotice("手机扫码需要局域网监听。请设置 EFT_TASK_ASSISTANT_HOST=0.0.0.0 后重启服务。", "error");
+      return;
+    }
+    const addresses = Array.isArray(network.addresses) ? network.addresses : [];
+    if (!addresses.length) {
+      setMobilePairingNotice("当前没有可用的局域网 IPv4 地址。", "error");
+      return;
+    }
+    elements.mobilePairingAddress.replaceChildren(...addresses.map((address) => {
+      const option = document.createElement("option");
+      option.value = address;
+      option.textContent = `${address}:${network.port}`;
+      return option;
+    }));
+    elements.mobilePairingContent.hidden = false;
+    await generateMobilePairing();
+  } catch (error) {
+    if (elements.mobilePairingDialog.open) setMobilePairingNotice(error.message, "error");
+  }
+}
+
+function revokeMobilePairing() {
+  mobilePairingGeneration += 1;
+  clearInterval(mobilePairingTimer);
+  mobilePairingTimer = null;
+  elements.mobilePairingQr.replaceChildren();
+  elements.mobilePairingUrl.textContent = "";
+  elements.mobilePairingContent.hidden = true;
+  elements.mobilePairingNotice.hidden = true;
+  if (!mobilePairingActive) return;
+  mobilePairingActive = false;
+  post("/api/mobile/pairing/cancel").catch(() => {});
+}
+
+function closeMobilePairing() {
+  if (elements.mobilePairingDialog.open) elements.mobilePairingDialog.close();
+  revokeMobilePairing();
 }
 
 function screenshotFingerprint(entry) {
@@ -1604,6 +1821,39 @@ function taskHiddenByKey(task) {
   return taskKeyIdentifiers(task).some((keyId) => hiddenKeyIds.has(keyId));
 }
 
+function itemImageProxyUrl(imageUrl) {
+  try {
+    const url = new URL(imageUrl);
+    if (url.protocol !== "https:" || !["assets.tarkov.dev", "www.eftarkov.com"].includes(url.hostname)) return "";
+    return `https://images.weserv.nl/?url=${encodeURIComponent(url.host + url.pathname)}`;
+  } catch {
+    return "";
+  }
+}
+
+function setItemImageSources(image, fallback, imageUrls) {
+  const sources = [...new Set(imageUrls.filter(Boolean))];
+  let nextSourceIndex = 0;
+  image.referrerPolicy = "no-referrer";
+  fallback.hidden = false;
+  image.hidden = false;
+  image.onload = () => {
+    image.hidden = false;
+    fallback.hidden = true;
+  };
+  image.onerror = () => {
+    if (nextSourceIndex < sources.length) {
+      image.src = sources[nextSourceIndex++];
+      return;
+    }
+    image.hidden = true;
+    fallback.hidden = false;
+  };
+  image.removeAttribute("src");
+  if (sources.length) image.src = sources[nextSourceIndex++];
+  else image.hidden = true;
+}
+
 function renderKeySummary(tasks) {
   const keysById = new Map();
   taskKeyIdsByTask = new Map();
@@ -1678,6 +1928,27 @@ function renderKeySummary(tasks) {
   keySummaryEntries = keys;
   const totalCount = keys.reduce((total, key) => total + key.count, 0);
   const keyHiddenTaskCount = tasks.filter(taskHiddenByKey).length;
+  const renderSignature = JSON.stringify({
+    language: currentLanguage,
+    keys: keys.map((key) => [
+      key.id,
+      key.name,
+      key.imageUrl,
+      key.sourceUrl,
+      key.count,
+      [...key.tasks],
+      hiddenKeyIds.has(key.id),
+      uiPreferences?.keyOwnershipAnswers?.[key.id] ?? null,
+      uiPreferences?.newKeyIds.includes(key.id) || false,
+    ]),
+    keyHiddenTaskCount,
+    pendingOwnershipIds: uiPreferences?.keyOwnershipPendingIds || [],
+  });
+  if (renderSignature === keySummaryRenderSignature) {
+    showNextKeyOwnershipPrompt();
+    return;
+  }
+  keySummaryRenderSignature = renderSignature;
   elements.keySummaryCount.textContent = keys.length + " 种";
   elements.keySummaryNote.textContent = keys.length
     ? "共需准备至少 " + totalCount + " 把钥匙；同一把钥匙用于多个任务时只计一次。未勾选钥匙会隐藏关联任务和地图点位；当前钥匙筛选隐藏 " + keyHiddenTaskCount + " 个任务。"
@@ -1711,16 +1982,7 @@ function renderKeySummary(tasks) {
     const iconFallback = document.createElement("span");
     iconFallback.className = "key-summary-icon-fallback";
     iconFallback.textContent = "🔑";
-    iconFallback.hidden = Boolean(key.imageUrl);
-    if (key.imageUrl) {
-      icon.src = key.imageUrl;
-      icon.addEventListener("error", () => {
-        icon.hidden = true;
-        iconFallback.hidden = false;
-      }, { once: true });
-    } else {
-      icon.hidden = true;
-    }
+    setItemImageSources(icon, iconFallback, [key.imageUrl, itemImageProxyUrl(key.imageUrl)]);
     const imageLink = document.createElement(key.sourceUrl ? "a" : "span");
     imageLink.className = "key-summary-image-link";
     if (key.sourceUrl) {
@@ -1783,18 +2045,11 @@ function showNextKeyOwnershipPrompt() {
     : displayedTaskNames || "当前任务";
   elements.keyOwnershipQuestion.textContent = `「${taskSummary}」需要这把钥匙。你现在有吗？`;
   const imageUrl = key.imageUrl || "";
-  elements.keyOwnershipImage.hidden = !imageUrl;
-  elements.keyOwnershipImageFallback.hidden = Boolean(imageUrl);
-  elements.keyOwnershipImage.onerror = () => {
-    elements.keyOwnershipImage.hidden = true;
-    elements.keyOwnershipImageFallback.hidden = false;
-  };
-  elements.keyOwnershipImage.onload = () => {
-    elements.keyOwnershipImage.hidden = false;
-    elements.keyOwnershipImageFallback.hidden = true;
-  };
-  if (imageUrl) elements.keyOwnershipImage.src = imageUrl;
-  else elements.keyOwnershipImage.removeAttribute("src");
+  setItemImageSources(
+    elements.keyOwnershipImage,
+    elements.keyOwnershipImageFallback,
+    [imageUrl, itemImageProxyUrl(imageUrl)],
+  );
   elements.keyOwnershipDialog.showModal();
 }
 
@@ -2102,7 +2357,10 @@ function renderHideoutPlanner() {
     }
   }
 
-  const materialRows = [...materials.values()].sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
+  const materialRows = [...materials.values()].sort((left, right) => (
+    Number(right.foundInRaidCount > 0) - Number(left.foundInRaidCount > 0)
+    || left.name.localeCompare(right.name, "zh-CN")
+  ));
   elements.hideoutMaterials.replaceChildren();
   if (!materialRows.length) {
     const empty = document.createElement("li");
@@ -2130,16 +2388,7 @@ function renderHideoutPlanner() {
     const imageFallback = document.createElement("span");
     imageFallback.className = "hideout-material-image-fallback";
     imageFallback.textContent = "📦";
-    imageFallback.hidden = Boolean(material.imageUrl);
-    if (material.imageUrl) {
-      image.src = material.imageUrl;
-      image.addEventListener("error", () => {
-        image.hidden = true;
-        imageFallback.hidden = false;
-      }, { once: true });
-    } else {
-      image.hidden = true;
-    }
+    setItemImageSources(image, imageFallback, [material.imageUrl, itemImageProxyUrl(material.imageUrl)]);
     imageWrap.append(image, imageFallback);
     const name = document.createElement("strong");
     name.className = "hideout-material-name";
@@ -2185,6 +2434,20 @@ function renderHideoutPlanner() {
     elements.hideoutMaterials.append(row);
   }
   updateHideoutMaterialSummary();
+}
+
+function setHideoutSectionsOpen(isOpen, persist = true) {
+  const open = Boolean(isOpen);
+  elements.hideoutPlannerContent.hidden = !open;
+  elements.hideoutPlannerToggle.textContent = open ? "收起" : "展开";
+  elements.hideoutPlannerToggle.setAttribute("aria-expanded", String(open));
+  elements.hideoutMaterialsPanel.open = open;
+  if (uiPreferences) {
+    uiPreferences.hideoutPlannerOpen = open;
+    uiPreferences.hideoutMaterialsOpen = open;
+  }
+  if (persist) saveUiPreferences();
+  syncHideoutMaterialsLayout();
 }
 
 function syncHideoutMaterialsLayout() {
@@ -2321,6 +2584,12 @@ function renderTasks(tasks) {
   const visibleTasks = filteredTasks.filter((task) => (
     showHiddenTasks || (!hiddenTaskIds.has(String(task.id)) && !taskHiddenByKey(task))
   ));
+  const tasksToRender = showHiddenTasks
+    ? [
+      ...visibleTasks.filter((task) => !hiddenTaskIds.has(String(task.id)) && !taskHiddenByKey(task)),
+      ...visibleTasks.filter((task) => hiddenTaskIds.has(String(task.id)) || taskHiddenByKey(task)),
+    ]
+    : visibleTasks;
   elements.rows.replaceChildren();
   elements.clearTasks.disabled = tasks.length === 0 || clearTasksBusy;
   elements.taskCount.textContent = selectedTrader || selectedMap
@@ -2335,7 +2604,7 @@ function renderTasks(tasks) {
       ].filter(Boolean).join("；") + "。点击“切换隐藏”可查看。"
       : "没有符合当前筛选条件的任务。试试切换到全部商人或全部地图。"
     : "当前档案还没有进行中的任务。可以手动添加、从资料库导入，或在截图识别后核对候选。";
-  for (const task of visibleTasks) {
+  for (const task of tasksToRender) {
     const taskId = String(task.id);
     const manuallyHidden = hiddenTaskIds.has(taskId);
     const taskHidden = manuallyHidden || taskHiddenByKey(task);
@@ -2862,6 +3131,10 @@ function renderAnalysis() {
         任务列表OCR: diagnostics.task_list_ocr,
       }, null, 2)
     : "等待分析结果";
+  if (sourceImage && capture?.id === loadedCaptureId
+    && screenshotOverlaySignature() !== drawnScreenshotOverlayKey) {
+    drawCanvas();
+  }
 }
 
 function renderScreenshotCandidates() {
@@ -3081,6 +3354,7 @@ const MAP_TASK_COLORS = [
   "#e76f51", "#4f83cc", "#44a581", "#b16ac7", "#d49a2a", "#328fa3",
   "#da5a8a", "#739a3d", "#8a70dc", "#cf7440", "#4580a6", "#9c5d73",
 ];
+const MAP_TASK_SHAPES = ["circle", "diamond", "square", "triangle", "pentagon", "hexagon"];
 
 function groupMapMarkers(markers, tasks) {
   const taskOrder = new Map((tasks || []).map((task, index) => [String(task.id), index]));
@@ -3106,10 +3380,72 @@ function groupMapMarkers(markers, tasks) {
         groupCount: taskMarkers.length,
         pointNumber: markerIndex + 1,
         taskColor: MAP_TASK_COLORS[taskIndex % MAP_TASK_COLORS.length],
+        taskShape: MAP_TASK_SHAPES[taskIndex % MAP_TASK_SHAPES.length],
       });
     });
   });
   return groupedMarkers;
+}
+
+function renderMapAnnotations() {
+  if (!mapView) return;
+  const visibleCategories = new Set(
+    [...elements.mapAnnotationFilters.querySelectorAll("input[data-map-annotation-filter]")]
+      .filter((input) => input.checked)
+      .map((input) => input.dataset.mapAnnotationFilter),
+  );
+  for (const annotation of mapView.annotations || []) {
+    const activeCategories = (annotation.categories || []).filter((category) => visibleCategories.has(category));
+    if (!activeCategories.length) continue;
+    if (activeCategories.includes("location")) {
+      const label = document.createElement("span");
+      label.className = "map-location-label";
+      label.textContent = annotation.title;
+      label.style.left = annotation.x_percent + "%";
+      label.style.top = annotation.y_percent + "%";
+      elements.mapMarkers.append(label);
+      continue;
+    }
+    const category = activeCategories.length > 1 ? "shared-exit" : activeCategories[0];
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "map-annotation-marker";
+    button.dataset.category = category;
+    button.style.left = annotation.x_percent + "%";
+    button.style.top = annotation.y_percent + "%";
+    const iconUrl = annotation.icon_urls?.[activeCategories[0]] || Object.values(annotation.icon_urls || {})[0] || "";
+    if (iconUrl) {
+      button.classList.add("has-icon");
+      const icon = document.createElement("img");
+      icon.src = iconUrl;
+      icon.alt = "";
+      icon.loading = "lazy";
+      icon.addEventListener("error", () => {
+        icon.remove();
+        button.classList.remove("has-icon");
+      }, { once: true });
+      button.append(icon);
+    }
+    const annotationTitle = mapAnnotationTooltipText(annotation);
+    button.setAttribute("aria-label", annotationTitle.split("\n")[0]);
+    button.setAttribute("aria-describedby", "mapTooltip");
+    const tooltipKey = `annotation:${annotation.id}`;
+    button.addEventListener("pointerenter", (event) => showMapTooltipText(annotationTitle, tooltipKey, event));
+    button.addEventListener("pointermove", positionMapTooltip);
+    button.addEventListener("pointerleave", hideMapTooltip);
+    button.addEventListener("focus", () => {
+      const bounds = button.getBoundingClientRect();
+      showMapTooltipText(annotationTitle, tooltipKey, { clientX: bounds.right, clientY: bounds.top });
+    });
+    button.addEventListener("blur", hideMapTooltip);
+    button.addEventListener("click", () => showMapPointImage({
+      ...annotation,
+      task_title: annotation.annotation_label || "地图标注",
+      pointNumber: 1,
+      groupCount: 1,
+    }));
+    elements.mapMarkers.append(button);
+  }
 }
 
 function mapMarkerOffsets(markers) {
@@ -3148,17 +3484,34 @@ function mapMarkerOffsets(markers) {
 }
 
 function mapMarkerVisitTitle(marker) {
+  const english = currentLanguage === "en";
   return [
-    `任务 ${marker.groupNumber}`,
+    english ? `Quest ${marker.groupNumber}` : `任务 ${marker.groupNumber}`,
     marker.task_title,
     marker.floor_name,
-    `点位 ${marker.pointNumber}/${marker.groupCount}`,
+    english ? `Point ${marker.pointNumber}/${marker.groupCount}` : `点位 ${marker.pointNumber}/${marker.groupCount}`,
     marker.title,
-    marker.visited ? "✓ 已到访" : "",
+    marker.visited ? (english ? "✓ Visited" : "✓ 已到访") : "",
     marker.description,
-    "左键查看点位信息",
-    "右键或 Shift+Enter 切换到访勾选",
+    english ? "Left-click to view point details" : "左键查看点位信息",
+    english ? "Right-click or Shift+Enter to toggle visited" : "右键或 Shift+Enter 切换到访勾选",
+  ].filter(Boolean).join("\n");
+}
+
+function mapAnnotationTooltipText(annotation) {
+  const categoryLabels = (annotation.categories || []).map((category) => {
+    const categoryLabel = annotation.category_labels?.[category] || "地图标注";
+    return translateUiText(categoryLabel);
+  });
+  const title = [
+    [...new Set(categoryLabels)].join(" / "),
+    annotation.title,
   ].filter(Boolean).join(" · ");
+  return [
+    title,
+    annotation.floor_name ? `${translateUiText("楼层")}: ${annotation.floor_name}` : "",
+    annotation.description,
+  ].filter(Boolean).join("\n");
 }
 
 function positionMapTooltip(event) {
@@ -3180,9 +3533,13 @@ function positionMapTooltip(event) {
 }
 
 function showMapTooltip(marker, event) {
+  showMapTooltipText(mapMarkerVisitTitle(marker), marker.id, event);
+}
+
+function showMapTooltipText(text, key, event) {
   if (event.pointerType === "touch") return;
-  elements.mapTooltip.textContent = mapMarkerVisitTitle(marker);
-  elements.mapTooltip.dataset.markerId = marker.id;
+  elements.mapTooltip.textContent = text;
+  elements.mapTooltip.dataset.markerId = key;
   elements.mapTooltip.hidden = false;
   positionMapTooltip(event);
 }
@@ -3198,7 +3555,6 @@ function updateMapMarkerVisitPresentation(marker, pin, visited) {
   if (pin) {
     pin.classList.toggle("is-visited", visited);
     pin.setAttribute("aria-label", mapMarkerVisitTitle(marker));
-    pin.title = mapMarkerVisitTitle(marker);
   }
   if (!elements.mapTooltip.hidden && elements.mapTooltip.dataset.markerId === marker.id) {
     elements.mapTooltip.textContent = mapMarkerVisitTitle(marker);
@@ -3603,6 +3959,7 @@ function renderMapTargets(markers, tasks = []) {
       groupHeading.className = "map-task-group";
       const swatch = document.createElement("span");
       swatch.className = "map-task-swatch";
+      swatch.dataset.shape = marker.taskShape;
       swatch.style.setProperty("--task-color", marker.taskColor);
       const collapseKey = mapTaskCollapseKey(marker.groupKey);
       const isCollapsed = collapsedMapTaskGroups.has(collapseKey);
@@ -3713,10 +4070,17 @@ function renderMapTargets(markers, tasks = []) {
       const offset = offsetsByMarkerKey.get(`${marker.groupKey}:${marker.pointNumber}`) || { x: 0, y: 0 };
       pin.style.setProperty("--marker-offset-x", `${offset.x}px`);
       pin.style.setProperty("--marker-offset-y", `${offset.y}px`);
-      pin.textContent = String(marker.pointNumber);
+      const markerFace = document.createElement("span");
+      markerFace.className = "map-marker-face";
+      markerFace.dataset.shape = marker.taskShape;
+      markerFace.textContent = String(marker.pointNumber);
+      const visitedBadge = document.createElement("span");
+      visitedBadge.className = "map-marker-visited-badge";
+      visitedBadge.setAttribute("aria-hidden", "true");
+      visitedBadge.textContent = "✓";
+      pin.append(markerFace, visitedBadge);
       pin.classList.toggle("is-visited", Boolean(marker.visited));
       pin.setAttribute("aria-label", mapMarkerVisitTitle(marker));
-      pin.title = mapMarkerVisitTitle(marker);
       pin.setAttribute("aria-keyshortcuts", "Shift+Enter");
       pin.setAttribute("aria-describedby", "mapTooltip");
       pin.addEventListener("pointerenter", (event) => showMapTooltip(marker, event));
@@ -3747,6 +4111,7 @@ function renderMapTargets(markers, tasks = []) {
 
     currentGroupContent?.append(buildMapPointRow(marker, pointHidden));
   }
+  renderMapAnnotations();
   const taskCount = new Set(taskVisibleMarkers.map((marker) => marker.groupKey)).size;
   const hiddenPointCount = taskVisibleMarkers.length - visibleMarkers.length;
   elements.mapSummary.textContent = `${mapView?.map_name || "地图"} · ${taskCount} 个显示任务组 · ${visibleMarkers.length} 个地图标点${hiddenPointCount ? ` · ${hiddenPointCount} 个已隐藏` : ""}`;
@@ -3755,6 +4120,7 @@ function renderMapTargets(markers, tasks = []) {
 function setMapZoom(value, persist = true) {
   mapZoom = Math.round(Math.min(MAP_ZOOM_MAX, Math.max(MAP_ZOOM_MIN, value)) * 100) / 100;
   elements.mapCanvas.style.transform = `scale(${mapZoom})`;
+  elements.mapCanvas.style.setProperty("--map-overlay-inverse-zoom", String(1 / mapZoom));
   elements.mapZoomLevel.textContent = `${Math.round(mapZoom * 100)}%`;
   elements.mapZoomOutButton.disabled = mapZoom <= MAP_ZOOM_MIN;
   elements.mapZoomInButton.disabled = mapZoom >= MAP_ZOOM_MAX;
@@ -3889,10 +4255,13 @@ async function loadMapView(requestedFloorKey = "") {
     elements.mapImage.src = result.image_url;
     const detailWarnings = result.detail_warnings || mapDetailWarnings;
     const hasMarkers = (result.markers || []).some((marker) => marker.point_kind !== "local");
+    const hasAnnotations = (result.annotations || []).length > 0;
     elements.mapHint.textContent = detailWarnings.length
       ? `部分任务详情暂时未能读取，自动点位可能不完整：${detailWarnings.join("、")}`
       : hasMarkers
-        ? "左键编号标记查看点位信息，右键切换到访勾选（勾显示在标记右下角）；右侧可隐藏单个点或查看全部说明图片。"
+        ? "左键编号标记查看点位信息，右键切换到访勾选（勾显示在标记右下角）；右侧可隐藏单个点或查看全部说明图片。悬停撤离/转移标记可立即查看名称和楼层。"
+        : hasAnnotations
+          ? "悬停撤离/转移点立即查看名称和楼层；点击标记查看来源图片。"
         : result.tasks.length
           ? "当前任务暂无可验证坐标；资料库提供点位后会自动标注。"
           : "加入或导入任务后，可在这里查看资料库中的自动点位。";
@@ -3916,11 +4285,87 @@ function drawCanvas() {
   const context = canvas.getContext("2d");
   context.clearRect(0, 0, canvas.width, canvas.height);
   context.drawImage(sourceImage, 0, 0, canvas.width, canvas.height);
+  drawScreenshotRegionOverlays(context, canvas.width, canvas.height);
+  drawnScreenshotOverlayKey = screenshotOverlaySignature();
+}
+
+function screenshotOverlaySignature() {
+  const analysis = state?.analysis;
+  const diagnostics = analysis?.diagnostics || {};
+  return JSON.stringify([
+    state?.capture?.id || "",
+    analysis?.kind || "",
+    analysis?.trader || "",
+    diagnostics.regions || {},
+    Boolean(diagnostics.task_list_ocr),
+  ]);
+}
+
+function drawScreenshotRegionOverlays(context, imageWidth, imageHeight) {
+  const analysis = state?.analysis;
+  const diagnostics = analysis?.diagnostics;
+  const regions = diagnostics?.regions;
+  if (!regions || typeof regions !== "object") return;
+  const definitions = [];
+  if (Array.isArray(regions.top_tabs)) {
+    definitions.push({ bounds: regions.top_tabs, normalized: true, label: "顶部页签识别区", color: "#52b7ff" });
+  }
+  if (analysis.trader) {
+    const selectedCard = (diagnostics.trader_card_scores || []).find(
+      (entry) => entry.trader === analysis.trader && Array.isArray(entry.bounds),
+    );
+    if (selectedCard) {
+      definitions.push({ bounds: selectedCard.bounds, normalized: false, label: `商人卡片 · ${analysis.trader}`, color: "#c78bff" });
+    }
+  }
+  if (analysis.kind === "商人任务" || Array.isArray(diagnostics.task_list_ocr)) {
+    if (Array.isArray(regions.task_list)) {
+      definitions.push({ bounds: regions.task_list, normalized: true, label: "任务列表识别区", color: "#ffc857" });
+    }
+  }
+  const lineWidth = Math.max(2, Math.min(imageWidth, imageHeight) * 0.002);
+  const fontSize = Math.max(13, imageWidth * 0.018);
+  context.save();
+  context.lineWidth = lineWidth;
+  context.font = `700 ${fontSize}px system-ui, sans-serif`;
+  for (const definition of definitions) {
+    const bounds = definition.bounds;
+    if (!Array.isArray(bounds) || bounds.length !== 4 || !bounds.every((value) => Number.isFinite(Number(value)))) {
+      continue;
+    }
+    const scaleX = definition.normalized ? imageWidth : 1;
+    const scaleY = definition.normalized ? imageHeight : 1;
+    const [leftValue, topValue, rightValue, bottomValue] = bounds.map((value) => Number(value));
+    const left = Math.max(0, Math.min(imageWidth - 1, leftValue * scaleX));
+    const top = Math.max(0, Math.min(imageHeight - 1, topValue * scaleY));
+    const right = Math.max(left + 1, Math.min(imageWidth, rightValue * scaleX));
+    const bottom = Math.max(top + 1, Math.min(imageHeight, bottomValue * scaleY));
+    const width = right - left;
+    const height = bottom - top;
+    context.globalAlpha = 0.08;
+    context.fillStyle = definition.color;
+    context.fillRect(left, top, width, height);
+    context.globalAlpha = 1;
+    context.strokeStyle = definition.color;
+    context.strokeRect(left, top, width, height);
+    const paddingX = fontSize * 0.42;
+    const paddingY = fontSize * 0.2;
+    const labelWidth = context.measureText(definition.label).width + paddingX * 2;
+    const labelHeight = fontSize + paddingY * 2;
+    const labelTop = Math.max(0, top - labelHeight - lineWidth);
+    context.fillStyle = definition.color;
+    context.fillRect(left, labelTop, labelWidth, labelHeight);
+    context.fillStyle = "#101317";
+    context.textBaseline = "top";
+    context.fillText(definition.label, left + paddingX, labelTop + paddingY);
+  }
+  context.restore();
 }
 
 function clearScreenshotPreview() {
   sourceImage = null;
   loadedCaptureId = null;
+  drawnScreenshotOverlayKey = "";
   elements.canvas.width = 0;
   elements.canvas.height = 0;
   elements.canvas.classList.remove("ready");
@@ -4302,6 +4747,19 @@ elements.operationHistoryList.addEventListener("click", (event) => {
 elements.operationHistoryPanel.addEventListener("toggle", saveUiPreferences);
 
 document.querySelector("#refreshLogsButton").addEventListener("click", refreshLogs);
+elements.mobileCompanionButton.addEventListener("click", openMobilePairing);
+elements.closeMobilePairingButton.addEventListener("click", closeMobilePairing);
+elements.refreshMobilePairingButton.addEventListener("click", generateMobilePairing);
+elements.mobilePairingAddress.addEventListener("change", generateMobilePairing);
+elements.mobilePairingDialog.addEventListener("close", revokeMobilePairing);
+elements.mobilePairingDialog.addEventListener("click", (event) => {
+  if (event.target === elements.mobilePairingDialog) closeMobilePairing();
+});
+elements.mapAnnotationFilters.addEventListener("change", (event) => {
+  if (!event.target.matches("input[data-map-annotation-filter]")) return;
+  saveUiPreferences();
+  renderMapTargets(mapView?.markers || [], mapView?.tasks || []);
+});
 elements.mapSelect.addEventListener("change", () => {
   setMapDrawingMode(false);
   if (elements.taskMapFilter.value !== elements.mapSelect.value) {
@@ -4373,14 +4831,14 @@ elements.taskMapFilter.addEventListener("change", () => {
   if (state) renderTasks(state.tasks);
 });
 elements.hideoutPlannerToggle.addEventListener("click", () => {
-  const isOpen = elements.hideoutPlannerContent.hidden;
-  elements.hideoutPlannerContent.hidden = !isOpen;
-  elements.hideoutPlannerToggle.textContent = isOpen ? "收起" : "展开";
-  elements.hideoutPlannerToggle.setAttribute("aria-expanded", String(isOpen));
-  saveUiPreferences();
-  syncHideoutMaterialsLayout();
+  setHideoutSectionsOpen(elements.hideoutPlannerContent.hidden);
 });
 elements.hideoutMaterialsPanel.addEventListener("toggle", () => {
+  const plannerOpen = !elements.hideoutPlannerContent.hidden;
+  if (plannerOpen !== elements.hideoutMaterialsPanel.open) {
+    setHideoutSectionsOpen(elements.hideoutMaterialsPanel.open);
+    return;
+  }
   saveUiPreferences();
   syncHideoutMaterialsLayout();
 });

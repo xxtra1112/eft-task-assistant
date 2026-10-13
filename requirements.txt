@@ -1,3 +1,4 @@
 rapidocr_onnxruntime>=1.4
 opencv-python>=4.10
 numpy>=1.26,<3
+qrcode==8.2

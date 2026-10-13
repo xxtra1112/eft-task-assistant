@@ -7,6 +7,7 @@ The Windows `v1.0.0` executable bundles the following open-source runtime compon
 | RapidOCR ONNX Runtime | 1.4.4 | Apache-2.0 |
 | OpenCV-Python | 5.0.0.93 | Apache-2.0 |
 | NumPy | 2.4.6 | BSD-3-Clause, 0BSD, MIT, Zlib, and CC0-1.0 components |
+| qrcode | 8.2 | BSD-3-Clause |
 | ONNX Runtime | 1.30.0 | MIT |
 | PyClipper | 1.4.0 | MIT |
 | Shapely | 2.1.2 | BSD-3-Clause |
@@ -21,3 +22,5 @@ The Windows `v1.0.0` executable bundles the following open-source runtime compon
 PyInstaller 6.22.3 is used to build the executable. PyInstaller is licensed under GPL-2.0-or-later with a bootloader exception that permits distributing applications built with it under other licenses.
 
 The versions above describe the published binary. Rebuilding from source may resolve different compatible dependency versions; consult each package's own license and notices when redistributing a rebuilt executable.
+
+The app may use the public [wsrv.nl](https://wsrv.nl/) image proxy as a browser-side fallback when an item image host is unavailable. It is an online service, is not bundled with the executable, and receives only the public image URL being requested.

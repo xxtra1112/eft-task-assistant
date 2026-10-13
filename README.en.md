@@ -11,6 +11,7 @@
 ## Contents
 
 - [Features](#features)
+- [Screenshots](#screenshots)
 - [Install and run](#install-and-run)
 - [First-time setup](#first-time-setup)
 - [Screenshot recognition](#screenshot-recognition)
@@ -32,6 +33,22 @@
 - **Mobile companion map:** Generate a one-time pairing QR code on the computer to view the map, markers, and current profile's quests on a phone. The phone has read-only access.
 - **Hideout planning:** Select stations and target levels, include prerequisite stations automatically, and total required materials while tracking what you already own.
 - **Local profiles:** No account or sign-in. Enter a profile name on first launch (PvE by default); profiles and game data stay on that computer. Each player runs the complete app on their own computer.
+
+## Screenshots
+
+These captures use an isolated demo profile and do not include anyone's local save or game screenshots. Quest and map details come from [EFTarkov](https://www.eftarkov.com/) public data and may change. The screenshots show the Chinese interface; use the in-app **EN** button to switch to English.
+
+![Desktop workspace with screenshot recognition and the quest list side by side](docs/images/desktop-overview-zh.png)
+
+*Desktop: screenshot recognition, trader and map filters, and quest objective progress.*
+
+![Tablet companion map with map markers on the left and the current raid checklist on the right](docs/images/tablet-map-zh.png)
+
+*Tablet: map and current-raid quest list side by side, with task-specific markers.*
+
+![Phone companion map with map annotations and the current raid checklist](docs/images/mobile-map-zh.png)
+
+*Phone: portrait map view with a collapsible current-raid task panel.*
 
 ## Install and run
 

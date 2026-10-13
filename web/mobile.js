@@ -7,6 +7,8 @@ const mobileElements = {
   mapSelect: document.querySelector("#mobileMapSelect"),
   floorSelect: document.querySelector("#mobileFloorSelect"),
   annotationFilters: document.querySelector("#mobileAnnotationFilters"),
+  taskPanel: document.querySelector(".mobile-task-panel"),
+  taskPanelResizer: document.querySelector("#mobileTaskPanelResizer"),
   viewport: document.querySelector("#mobileMapViewport"),
   canvas: document.querySelector("#mobileMapCanvas"),
   image: document.querySelector("#mobileMapImage"),
@@ -30,7 +32,6 @@ const mobileElements = {
   pointDescription: document.querySelector("#mobilePointDescription"),
   pointMeta: document.querySelector("#mobilePointMeta"),
   pointImages: document.querySelector("#mobilePointImages"),
-  pointVisit: document.querySelector("#mobilePointVisit"),
   pointSource: document.querySelector("#mobilePointSource"),
   pointClose: document.querySelector("#mobilePointClose"),
 };
@@ -59,14 +60,44 @@ let mobilePairingAttempted = false;
 let mobileToastTimer = null;
 let mobileRefreshTimer = null;
 let mobileZoom = 1;
+let mobileTaskPanelHeightRatio = null;
+let mobileTaskPanelDrag = null;
 let mobileMapBaseWidth = 0;
 let mobileMapBaseHeight = 0;
+let mobileObservedMapViewportWidth = 0;
 let mobilePanX = 0;
 let mobilePanY = 0;
 let mobileMapDragging = null;
 let mobilePinchStart = null;
 const mobilePointers = new Map();
-const mobileBusyRequirements = new Set();
+
+function detectMobileDeviceType() {
+  const userAgent = navigator.userAgent || "";
+  const platform = navigator.userAgentData?.platform || navigator.platform || "";
+  const touchPoints = navigator.maxTouchPoints || 0;
+  const screenWidth = window.screen?.width || 0;
+  const screenHeight = window.screen?.height || 0;
+  const shortestScreenEdge = Math.min(screenWidth, screenHeight);
+  const isIPad = /iPad/i.test(userAgent) || (/Mac/i.test(platform) && touchPoints > 1);
+  const isAndroidTablet = /Android/i.test(userAgent) && !/Mobile/i.test(userAgent);
+  const isTabletBrowser = /Tablet|PlayBook|Silk/i.test(userAgent);
+  const isLargeTouchDevice = touchPoints > 1 && shortestScreenEdge >= 600 && !/Mobile/i.test(userAgent);
+  return isIPad || isAndroidTablet || isTabletBrowser || isLargeTouchDevice ? "tablet" : "phone";
+}
+
+function updateMobileDeviceType() {
+  const deviceType = detectMobileDeviceType();
+  mobileElements.app.dataset.deviceType = deviceType;
+  mobileElements.app.classList.toggle("is-tablet-device", deviceType === "tablet");
+  mobileElements.app.classList.toggle("is-phone-device", deviceType === "phone");
+}
+
+function mobileUsesTabletLayout() {
+  return mobileElements.app.classList.contains("is-tablet-device")
+    && window.matchMedia("(min-width: 620px) and (min-height: 520px)").matches;
+}
+
+updateMobileDeviceType();
 
 function mobileRequest(path, options = {}) {
   const headers = { ...(options.headers || {}) };
@@ -102,6 +133,13 @@ function showMobileGate(message, retry = false) {
 function showMobileApp() {
   mobileElements.gate.hidden = true;
   mobileElements.app.hidden = false;
+  restoreMobileTaskPanelHeight();
+  const bounds = mobileTaskPanelHeightBounds();
+  mobileElements.taskPanelResizer.setAttribute("aria-valuemin", String(bounds.min));
+  mobileElements.taskPanelResizer.setAttribute("aria-valuemax", String(bounds.max));
+  mobileElements.taskPanelResizer.setAttribute("aria-valuenow", String(Math.round(
+    mobileElements.taskPanel.getBoundingClientRect().height,
+  )));
 }
 
 function mobileStorageKey() {
@@ -139,6 +177,8 @@ function saveMobilePreferences() {
         [...mobileElements.annotationFilters.querySelectorAll("input[data-map-annotation-filter]")]
           .map((input) => [input.dataset.mapAnnotationFilter, input.checked]),
       ),
+      annotationFiltersCollapsed: !mobileElements.annotationFilters.open,
+      taskPanelHeightRatio: mobileTaskPanelHeightRatio ?? preferences.taskPanelHeightRatio ?? null,
     }));
   } catch {
     showMobileToast("浏览器无法保存本机地图选择。", "error");
@@ -146,10 +186,51 @@ function saveMobilePreferences() {
 }
 
 function applyMobileAnnotationPreferences() {
-  const annotations = readMobilePreferences().mapAnnotations || MOBILE_ANNOTATION_DEFAULTS;
+  const preferences = readMobilePreferences();
+  const annotations = preferences.mapAnnotations || MOBILE_ANNOTATION_DEFAULTS;
+  mobileElements.annotationFilters.open = preferences.annotationFiltersCollapsed !== true;
   mobileElements.annotationFilters.querySelectorAll("input[data-map-annotation-filter]").forEach((input) => {
     input.checked = annotations[input.dataset.mapAnnotationFilter] !== false;
   });
+}
+
+function mobileTaskPanelHeightBounds() {
+  const appHeight = mobileElements.app.clientHeight;
+  if (!appHeight) return { min: 0, max: appHeight };
+  const fixedHeight = mobileElements.app.querySelector(".mobile-topbar").getBoundingClientRect().height
+    + mobileElements.app.querySelector(".mobile-map-controls").getBoundingClientRect().height
+    + mobileElements.taskPanelResizer.getBoundingClientRect().height;
+  return {
+    min: 0,
+    max: Math.max(0, appHeight - fixedHeight - 2),
+  };
+}
+
+function setMobileTaskPanelHeight(height, remember = false) {
+  const appHeight = mobileElements.app.clientHeight;
+  if (!appHeight || mobileUsesTabletLayout()) return;
+  const bounds = mobileTaskPanelHeightBounds();
+  const clampedHeight = Math.round(Math.max(bounds.min, Math.min(bounds.max, height)));
+  mobileElements.app.style.setProperty("--mobile-task-panel-height", `${clampedHeight}px`);
+  mobileElements.taskPanelResizer.setAttribute("aria-valuemin", String(bounds.min));
+  mobileElements.taskPanelResizer.setAttribute("aria-valuemax", String(bounds.max));
+  mobileElements.taskPanelResizer.setAttribute("aria-valuenow", String(clampedHeight));
+  if (remember) mobileTaskPanelHeightRatio = clampedHeight / appHeight;
+}
+
+function restoreMobileTaskPanelHeight() {
+  mobileTaskPanelHeightRatio = null;
+  mobileElements.app.style.removeProperty("--mobile-task-panel-height");
+  const storedRatio = readMobilePreferences().taskPanelHeightRatio;
+  if (typeof storedRatio === "number" && Number.isFinite(storedRatio) && storedRatio >= 0 && storedRatio <= 0.95) {
+    mobileTaskPanelHeightRatio = storedRatio;
+    setMobileTaskPanelHeight(mobileElements.app.clientHeight * storedRatio);
+  }
+}
+
+function selectedMobileMapTaskIds() {
+  const map = mobileMapList.find((item) => String(item.map_id) === String(mobileSelectedMapId));
+  return Array.isArray(map?.task_ids) ? new Set(map.task_ids.map(String)) : null;
 }
 
 function showMobileToast(message, kind = "info") {
@@ -161,7 +242,10 @@ function showMobileToast(message, kind = "info") {
 }
 
 function activeMobileTasks() {
-  return (mobileState?.tasks || []).filter((task) => task.state !== "complete");
+  const mapTaskIds = selectedMobileMapTaskIds();
+  return (mobileState?.tasks || []).filter((task) => (
+    task.state !== "complete" && (!mapTaskIds || mapTaskIds.has(String(task.id)))
+  ));
 }
 
 function requirementProgress(task) {
@@ -181,7 +265,9 @@ function renderMobileTasks() {
   if (!tasks.length) {
     const empty = document.createElement("p");
     empty.className = "mobile-empty";
-    empty.textContent = "当前档案还没有任务。";
+    empty.textContent = selectedMobileMapTaskIds()
+      ? "当前地图暂无未完成任务。"
+      : "当前档案还没有任务。";
     mobileElements.taskList.append(empty);
     return;
   }
@@ -220,51 +306,28 @@ function renderMobileTasks() {
     requirements.forEach((requirement, index) => {
       const row = document.createElement("div");
       row.className = "mobile-requirement";
-      row.dataset.taskId = String(task.id);
-      row.dataset.requirementIndex = String(index);
       const target = Number(requirement.target_count || 0);
+      const label = document.createElement("div");
+      label.className = `mobile-requirement-label${requirement.optional ? " is-optional" : ""}`;
       if (target > 1) {
-        const label = document.createElement("span");
-        label.className = `mobile-requirement-label${requirement.optional ? " is-optional" : ""}`;
         label.textContent = requirement.text || "未命名要求";
         if (requirement.optional) label.append(mobileOptionalBadge());
         const counter = document.createElement("div");
         counter.className = "requirement-counter";
-        const decrease = document.createElement("button");
-        decrease.type = "button";
-        decrease.dataset.mobileCountAction = "decrease";
-        decrease.setAttribute("aria-label", `减少：${requirement.text || "任务要求"}`);
-        decrease.textContent = "−";
         const count = document.createElement("span");
         count.textContent = `${Number(requirement.current_count || 0)}/${target}`;
-        const increase = document.createElement("button");
-        increase.type = "button";
-        increase.dataset.mobileCountAction = "increase";
-        increase.setAttribute("aria-label", `增加：${requirement.text || "任务要求"}`);
-        increase.textContent = "+";
-        counter.append(decrease, count, increase);
+        counter.append(count);
         row.append(label, counter);
       } else {
-        const label = document.createElement("label");
-        label.className = `mobile-requirement-label${requirement.optional ? " is-optional" : ""}`;
-        const checkbox = document.createElement("input");
-        checkbox.type = "checkbox";
-        checkbox.checked = Boolean(requirement.completed);
-        checkbox.disabled = mobileBusyRequirements.has(`${task.id}:${index}`) || task.state === "complete";
-        checkbox.dataset.mobileRequirementCheckbox = "true";
-        checkbox.dataset.taskId = String(task.id);
-        checkbox.dataset.requirementIndex = String(index);
+        const status = document.createElement("span");
+        status.className = `mobile-requirement-check${requirement.completed ? " is-complete" : ""}`;
+        status.textContent = requirement.completed ? "✓" : "";
+        status.setAttribute("aria-hidden", "true");
         const text = document.createElement("span");
         text.textContent = requirement.text || "未命名要求";
-        label.append(checkbox, text);
+        label.append(status, text);
         if (requirement.optional) label.append(mobileOptionalBadge());
         row.append(label);
-      }
-      const countButtons = row.querySelectorAll("button[data-mobile-count-action]");
-      for (const button of countButtons) {
-        button.dataset.taskId = String(task.id);
-        button.dataset.requirementIndex = String(index);
-        button.disabled = mobileBusyRequirements.has(`${task.id}:${index}`) || task.state === "complete";
       }
       body.append(row);
     });
@@ -326,6 +389,7 @@ function sizeMobileMapCanvas() {
   const ratio = Number(floor.width) / Number(floor.height);
   const viewportWidth = mobileElements.viewport.clientWidth;
   const viewportHeight = mobileElements.viewport.clientHeight;
+  if (viewportWidth <= 0 || viewportHeight <= 0) return;
   const width = Math.max(1, Math.min(viewportWidth, viewportHeight * ratio));
   mobileMapBaseWidth = width;
   mobileMapBaseHeight = width / ratio;
@@ -466,6 +530,7 @@ async function loadMobileMap(mapId, floorKey = "") {
   const generation = ++mobileMapLoadGeneration;
   mobileSelectedMapId = String(mapId);
   renderMobileMapOptions(mobileSelectedMapId);
+  renderMobileTasks();
   mobileElements.mapError.hidden = true;
   mobileElements.mapLoading.textContent = "正在载入地图…";
   mobileElements.mapLoading.hidden = false;
@@ -474,6 +539,8 @@ async function loadMobileMap(mapId, floorKey = "") {
     const result = await mobileRequest(mobileMapRequestUrl(mapId, floorKey));
     if (generation !== mobileMapLoadGeneration) return;
     mobileMapView = result;
+    mobileMapBaseWidth = 0;
+    mobileMapBaseHeight = 0;
     renderMobileFloorOptions(result.floors, result.floor?.key);
     const preferences = readMobilePreferences();
     preferences.floors = preferences.floors || {};
@@ -483,6 +550,8 @@ async function loadMobileMap(mapId, floorKey = "") {
         mapId: mobileSelectedMapId,
         floors: preferences.floors,
         mapAnnotations: preferences.mapAnnotations || MOBILE_ANNOTATION_DEFAULTS,
+        annotationFiltersCollapsed: preferences.annotationFiltersCollapsed === true,
+        taskPanelHeightRatio: preferences.taskPanelHeightRatio ?? null,
       }));
     } catch {
       showMobileToast("浏览器无法保存本机地图选择。", "error");
@@ -544,8 +613,9 @@ async function loadMobileState() {
   const previousActiveIds = activeMobileTasks().map((task) => String(task.id)).join(",");
   mobileState = next;
   applyMobileAnnotationPreferences();
+  if (profileChanged) restoreMobileTaskPanelHeight();
   const selectedProfile = (next.profiles || []).find((profile) => profile.id === next.selected_profile_id);
-  mobileElements.playerName.textContent = [next.player?.username, selectedProfile?.name].filter(Boolean).join(" · ") || "玩家";
+  mobileElements.playerName.textContent = selectedProfile?.name || "档案";
   renderMobileTasks();
   if (profileChanged) {
     mobileMapList = [];
@@ -563,7 +633,7 @@ async function loadMobileState() {
 
 async function initializeMobileSession() {
   mobileElements.gateRetry.disabled = true;
-  showMobileGate("正在验证手机会话…");
+  showMobileGate("正在验证手机地图访问权限…");
   try {
     if (!mobilePairingAttempted) {
       const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
@@ -582,8 +652,7 @@ async function initializeMobileSession() {
     } catch {
       savedTheme = "dark";
     }
-    document.documentElement.dataset.theme = savedTheme === "light" ? "light" : "dark";
-    mobileElements.theme.textContent = savedTheme === "light" ? "☾" : "☼";
+    applyMobileTheme(savedTheme);
     if (!mobileMapList.length) {
       try {
         await loadMobileMapIndex();
@@ -597,8 +666,8 @@ async function initializeMobileSession() {
     }, MOBILE_REFRESH_INTERVAL);
   } catch (error) {
     showMobileGate(error.status === 401
-      ? (mobilePairingAttempted ? "二维码无效或已过期，请回到电脑端重新生成。" : "请从电脑端扫描手机地图二维码进入，无需再次登录。")
-      : error.message || "手机会话验证失败，请回到电脑端重新生成二维码。", true);
+      ? (mobilePairingAttempted ? "二维码无效或已过期，请回到电脑端重新生成。" : "请扫描电脑端生成的二维码，只读查看地图和任务；无需账号。")
+      : error.message || "手机地图访问验证失败，请回到电脑端重新生成二维码。", true);
   } finally {
     mobileElements.gateRetry.disabled = false;
   }
@@ -608,7 +677,7 @@ function handleMobileSessionError(error) {
   if (error?.status === 401) {
     clearInterval(mobileRefreshTimer);
     mobileRefreshTimer = null;
-    showMobileGate("手机会话已失效，请从电脑端重新扫描二维码。", true);
+    showMobileGate("手机地图访问已失效，请从电脑端重新扫描二维码。", true);
   } else if (error) {
     showMobileToast(error.message || "同步失败，请稍后重试。", "error");
   }
@@ -621,6 +690,14 @@ function safeMobileExternalUrl(value) {
   } catch {
     return "";
   }
+}
+
+function applyMobileTheme(theme) {
+  const normalizedTheme = theme === "light" ? "light" : "dark";
+  document.documentElement.dataset.theme = normalizedTheme;
+  mobileElements.theme.textContent = normalizedTheme === "light" ? "☾" : "☼";
+  const themeColor = document.querySelector('meta[name="theme-color"]');
+  if (themeColor) themeColor.content = normalizedTheme === "light" ? "#f5f5f7" : "#000000";
 }
 
 function appendMobileMeta(label, value) {
@@ -672,63 +749,7 @@ function openMobilePoint(marker) {
   const sourceUrl = safeMobileExternalUrl(marker.source_page_url || marker.source_url);
   mobileElements.pointSource.href = sourceUrl;
   mobileElements.pointSource.hidden = !sourceUrl;
-  mobileElements.pointVisit.hidden = isMapAnnotation;
-  mobileElements.pointVisit.textContent = marker.visited ? "取消已到访标记" : "标记已到访";
-  mobileElements.pointVisit.dataset.visited = String(Boolean(marker.visited));
-  mobileElements.pointVisit.disabled = isMapAnnotation || !/^eftarkov-[0-9a-f]{24}$/i.test(String(marker.id || ""));
   if (!mobileElements.pointDialog.open) mobileElements.pointDialog.showModal();
-}
-
-async function toggleMobilePointVisited() {
-  const marker = (mobileMapView?.markers || []).find((item) => item.id === mobileSelectedMarkerId);
-  if (!marker) return;
-  const visited = mobileElements.pointVisit.dataset.visited !== "true";
-  mobileElements.pointVisit.disabled = true;
-  try {
-    await mobilePost("/api/map/markers/visit", {
-      map_id: mobileMapView.map_id,
-      marker_id: marker.id,
-      visited,
-    });
-    marker.visited = visited;
-    renderMobileMarkers();
-    mobileElements.pointVisit.dataset.visited = String(visited);
-    mobileElements.pointVisit.textContent = visited ? "取消已到访标记" : "标记已到访";
-    showMobileToast(visited ? "已标记到访" : "已取消到访标记");
-  } catch (error) {
-    showMobileToast(error.message, "error");
-  } finally {
-    mobileElements.pointVisit.disabled = false;
-  }
-}
-
-async function setMobileRequirement(taskId, index, payload) {
-  const task = (mobileState?.tasks || []).find((item) => String(item.id) === String(taskId));
-  const requirement = task?.requirements?.[index];
-  if (!task || !requirement) {
-    showMobileToast("没有找到对应任务。", "error");
-    return;
-  }
-  const key = `${taskId}:${index}`;
-  if (mobileBusyRequirements.has(key)) return;
-  mobileBusyRequirements.add(key);
-  renderMobileTasks();
-  try {
-    const path = Object.hasOwn(payload, "current_count")
-      ? `/api/tasks/${taskId}/requirements/${index}/count`
-      : `/api/tasks/${taskId}/requirements/${index}`;
-    const result = await mobilePost(path, payload);
-    const completed = result.task?.state === "complete";
-    await loadMobileState();
-    if (completed) {
-      showMobileToast(`${task.title} 已自动完成`);
-    }
-  } catch (error) {
-    showMobileToast(error.message, "error");
-  } finally {
-    mobileBusyRequirements.delete(key);
-    renderMobileTasks();
-  }
 }
 
 mobileElements.gateRetry.addEventListener("click", initializeMobileSession);
@@ -737,6 +758,7 @@ mobileElements.annotationFilters.addEventListener("change", (event) => {
   saveMobilePreferences();
   renderMobileMarkers();
 });
+mobileElements.annotationFilters.addEventListener("toggle", saveMobilePreferences);
 mobileElements.mapSelect.addEventListener("change", () => {
   mobilePanX = 0;
   mobilePanY = 0;
@@ -756,31 +778,13 @@ mobileElements.floorSelect.addEventListener("change", () => {
       mapId: mobileSelectedMapId,
       floors: preferences.floors,
       mapAnnotations: preferences.mapAnnotations || MOBILE_ANNOTATION_DEFAULTS,
+      annotationFiltersCollapsed: preferences.annotationFiltersCollapsed === true,
+      taskPanelHeightRatio: preferences.taskPanelHeightRatio ?? null,
     }));
   } catch {
     showMobileToast("浏览器无法保存本机地图选择。", "error");
   }
   loadMobileMap(mobileSelectedMapId, mobileElements.floorSelect.value);
-});
-mobileElements.taskList.addEventListener("change", (event) => {
-  const checkbox = event.target.closest("input[data-mobile-requirement-checkbox]");
-  if (!checkbox) return;
-  setMobileRequirement(checkbox.dataset.taskId, Number(checkbox.dataset.requirementIndex), {
-    completed: checkbox.checked,
-  });
-});
-mobileElements.taskList.addEventListener("click", (event) => {
-  const button = event.target.closest("button[data-mobile-count-action]");
-  if (!button) return;
-  const task = (mobileState?.tasks || []).find((item) => String(item.id) === button.dataset.taskId);
-  const index = Number(button.dataset.requirementIndex);
-  const requirement = task?.requirements?.[index];
-  if (!requirement) return;
-  const target = Number(requirement.target_count || 0);
-  const current = Number(requirement.current_count || 0);
-  const next = Math.min(target, Math.max(0, current + (button.dataset.mobileCountAction === "increase" ? 1 : -1)));
-  if (next === current) return;
-  setMobileRequirement(button.dataset.taskId, index, { current_count: next });
 });
 mobileElements.zoomOut.addEventListener("click", () => setMobileMapZoom(mobileZoom - 0.2));
 mobileElements.zoomIn.addEventListener("click", () => setMobileMapZoom(mobileZoom + 0.2));
@@ -808,8 +812,7 @@ mobileElements.refresh.addEventListener("click", async () => {
 });
 mobileElements.theme.addEventListener("click", () => {
   const nextTheme = document.documentElement.dataset.theme === "light" ? "dark" : "light";
-  document.documentElement.dataset.theme = nextTheme;
-  mobileElements.theme.textContent = nextTheme === "light" ? "☾" : "☼";
+  applyMobileTheme(nextTheme);
   try {
     localStorage.setItem("eft-task-assistant-theme", nextTheme);
   } catch {
@@ -826,17 +829,59 @@ mobileElements.logout.addEventListener("click", async () => {
     mobileMapList = [];
     mobileMapView = null;
     mobileSelectedMapId = "";
-    showMobileGate("手机会话已退出。再次使用时，请扫描电脑端二维码。", true);
+    showMobileGate("手机访问已结束。再次使用时，请扫描电脑端二维码。", true);
   } catch (error) {
     showMobileToast(error.message, "error");
   } finally {
     mobileElements.logout.disabled = false;
   }
 });
-mobileElements.pointVisit.addEventListener("click", toggleMobilePointVisited);
 mobileElements.pointClose.addEventListener("click", () => mobileElements.pointDialog.close());
 mobileElements.pointDialog.addEventListener("click", (event) => {
   if (event.target === mobileElements.pointDialog) mobileElements.pointDialog.close();
+});
+
+mobileElements.taskPanelResizer.addEventListener("pointerdown", (event) => {
+  if (event.button !== 0 || mobileUsesTabletLayout()) return;
+  mobileTaskPanelDrag = {
+    pointerId: event.pointerId,
+    startY: event.clientY,
+    startHeight: mobileElements.taskPanel.getBoundingClientRect().height,
+  };
+  mobileElements.taskPanelResizer.classList.add("is-dragging");
+  mobileElements.taskPanelResizer.setPointerCapture(event.pointerId);
+  event.preventDefault();
+});
+mobileElements.taskPanelResizer.addEventListener("pointermove", (event) => {
+  if (mobileTaskPanelDrag?.pointerId !== event.pointerId) return;
+  setMobileTaskPanelHeight(mobileTaskPanelDrag.startHeight + mobileTaskPanelDrag.startY - event.clientY, true);
+  event.preventDefault();
+});
+const finishMobileTaskPanelResize = (event) => {
+  if (mobileTaskPanelDrag?.pointerId !== event.pointerId) return;
+  mobileTaskPanelDrag = null;
+  mobileElements.taskPanelResizer.classList.remove("is-dragging");
+  if (mobileElements.taskPanelResizer.hasPointerCapture(event.pointerId)) {
+    mobileElements.taskPanelResizer.releasePointerCapture(event.pointerId);
+  }
+  saveMobilePreferences();
+};
+mobileElements.taskPanelResizer.addEventListener("pointerup", finishMobileTaskPanelResize);
+mobileElements.taskPanelResizer.addEventListener("pointercancel", finishMobileTaskPanelResize);
+mobileElements.taskPanelResizer.addEventListener("lostpointercapture", finishMobileTaskPanelResize);
+mobileElements.taskPanelResizer.addEventListener("keydown", (event) => {
+  if (mobileUsesTabletLayout()) return;
+  const currentHeight = mobileElements.taskPanel.getBoundingClientRect().height;
+  const bounds = mobileTaskPanelHeightBounds();
+  const nextHeight = event.key === "ArrowUp" ? currentHeight + 16
+    : event.key === "ArrowDown" ? currentHeight - 16
+      : event.key === "Home" ? bounds.min
+        : event.key === "End" ? bounds.max
+          : null;
+  if (nextHeight == null) return;
+  event.preventDefault();
+  setMobileTaskPanelHeight(nextHeight, true);
+  saveMobilePreferences();
 });
 
 mobileElements.viewport.addEventListener("pointerdown", (event) => {
@@ -880,8 +925,20 @@ const finishMobilePan = (event) => {
 mobileElements.viewport.addEventListener("pointerup", finishMobilePan);
 mobileElements.viewport.addEventListener("pointercancel", finishMobilePan);
 mobileElements.viewport.addEventListener("lostpointercapture", finishMobilePan);
-window.addEventListener("resize", sizeMobileMapCanvas, { passive: true });
-new ResizeObserver(sizeMobileMapCanvas).observe(mobileElements.viewport);
+window.addEventListener("resize", () => {
+  updateMobileDeviceType();
+  sizeMobileMapCanvas();
+  if (mobileTaskPanelHeightRatio != null) {
+    setMobileTaskPanelHeight(mobileElements.app.clientHeight * mobileTaskPanelHeightRatio);
+  }
+}, { passive: true });
+new ResizeObserver((entries) => {
+  const width = entries[0]?.contentRect.width ?? mobileElements.viewport.clientWidth;
+  if (Math.abs(width - mobileObservedMapViewportWidth) > 1 || !mobileMapBaseWidth) {
+    mobileObservedMapViewportWidth = width;
+    sizeMobileMapCanvas();
+  }
+}).observe(mobileElements.viewport);
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden && mobileState) {
     loadMobileState().catch(handleMobileSessionError);

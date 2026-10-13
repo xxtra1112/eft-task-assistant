@@ -687,6 +687,22 @@ class TaskStore:
             ).fetchone()
         return self._profile(row)
 
+    def rename_profile(self, profile_id: int, name: str) -> Profile:
+        normalized_name = name.strip()
+        if not normalized_name or len(normalized_name) > 48:
+            raise ValueError("档案名称需为 1–48 个字符。")
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE profiles SET name = ? WHERE id = ?",
+                (normalized_name, profile_id),
+            )
+            if not cursor.rowcount:
+                raise ValueError("找不到要命名的档案。")
+            row = connection.execute(
+                "SELECT * FROM profiles WHERE id = ?", (profile_id,)
+            ).fetchone()
+        return self._profile(row)
+
     def list_tasks(self, profile_id: int | None = None) -> list[Task]:
         with self._connect() as connection:
             if profile_id is None:

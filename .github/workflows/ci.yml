@@ -29,6 +29,9 @@ jobs:
       - name: Install runtime dependencies
         run: python -m pip install -r requirements.txt
 
+      - name: Install test runner
+        run: python -m pip install pytest
+
       - name: Check installed dependencies
         run: python -m pip check
 
@@ -36,6 +39,7 @@ jobs:
         run: |
           python -m compileall -q main.py catalog.py diagnostics.py hideout_data.py players.py recognition.py storage.py task_requirements.py web_server.py
           python -c "import catalog, diagnostics, hideout_data, main, players, recognition, storage, task_requirements, web_server; print('Python imports passed')"
+          python -m pytest -q
 
       - name: Check Windows console encoding
         run: python -c "import sys; sys.stdout.reconfigure(encoding='cp1252'); import web_server; web_server._configure_console_encoding(); print('塔科夫启动编码正常')"
@@ -113,12 +117,54 @@ jobs:
               if (Test-Path $stderr) { Get-Content $stderr }
               throw 'Packaged app did not return HTTP 200 on localhost:8765.'
             }
-            $mobilePage = Invoke-WebRequest -Uri 'http://127.0.0.1:8765/mobile' -TimeoutSec 5 -UseBasicParsing
+            if ($response.Content -match 'id="authForm"') {
+              throw 'Packaged desktop page unexpectedly contains the retired account-login form.'
+            }
+            $localState = Invoke-RestMethod -Uri 'http://127.0.0.1:8765/api/state' -TimeoutSec 5
+            if (-not $localState.profiles -or -not $localState.selected_profile_id) {
+              throw 'Packaged app did not enter its local profile automatically.'
+            }
+            if (-not $localState.profile_name_required) {
+              throw 'Packaged app did not request a name for its first local profile.'
+            }
+            $profileBody = @{ name = 'CI Local Profile' } | ConvertTo-Json -Compress
+            $namedProfile = Invoke-RestMethod -Uri 'http://127.0.0.1:8765/api/profiles/name' -Method Post -ContentType 'application/json' -Body $profileBody -TimeoutSec 5
+            if ($namedProfile.profile.name -ne 'CI Local Profile') {
+              throw 'Packaged app did not save the local profile name.'
+            }
+            $localState = Invoke-RestMethod -Uri 'http://127.0.0.1:8765/api/state' -TimeoutSec 5
+            if ($localState.profile_name_required) {
+              throw 'Packaged app kept the first-run profile naming prompt after saving.'
+            }
+            $mobileInfo = Invoke-RestMethod -Uri 'http://127.0.0.1:8765/api/mobile/info' -TimeoutSec 5
+            $mobilePort = [int]$mobileInfo.port
+            if ($mobilePort -lt 8766) {
+              throw 'Packaged app did not start its separate phone service.'
+            }
+            $mobilePage = Invoke-WebRequest -Uri "http://127.0.0.1:$mobilePort/mobile" -TimeoutSec 5 -UseBasicParsing
             if ($mobilePage.StatusCode -ne 200 -or $mobilePage.Content -notmatch '/assets/mobile.js') {
               throw 'Packaged mobile map page did not load its frontend.'
             }
+            $mobileDenied = $false
+            try {
+              Invoke-WebRequest -Uri "http://127.0.0.1:$mobilePort/api/state" -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop | Out-Null
+            } catch {
+              $mobileDenied = [int]$_.Exception.Response.StatusCode -eq 403
+            }
+            if (-not $mobileDenied) {
+              throw 'Mobile listener exposed a desktop management API.'
+            }
+            $unpairedMobileDenied = $false
+            try {
+              Invoke-WebRequest -Uri "http://127.0.0.1:$mobilePort/api/mobile/state" -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop | Out-Null
+            } catch {
+              $unpairedMobileDenied = [int]$_.Exception.Response.StatusCode -eq 401
+            }
+            if (-not $unpairedMobileDenied) {
+              throw 'Mobile listener allowed a phone without QR pairing.'
+            }
             foreach ($asset in @('mobile.js', 'mobile.css')) {
-              $mobileAsset = Invoke-WebRequest -Uri "http://127.0.0.1:8765/assets/$asset" -TimeoutSec 5 -UseBasicParsing
+              $mobileAsset = Invoke-WebRequest -Uri "http://127.0.0.1:$mobilePort/assets/$asset" -TimeoutSec 5 -UseBasicParsing
               if ($mobileAsset.StatusCode -ne 200) {
                 throw "Packaged mobile asset failed: $asset"
               }
@@ -148,7 +194,7 @@ jobs:
           body: |
             ## 简体中文
 
-            EFT 任务助手 Windows x64 首次自动构建版本。下载可执行文件运行即可，无需另装 Python。首次使用请在服务所在电脑创建管理员账号；详细使用说明见仓库 README。
+            EFT 任务助手 Windows x64 自动构建版本。下载可执行文件运行即可，无需另装 Python；桌面数据保存在本机，无需账号登录。手机可通过二维码读取局域网地图。详细使用说明见仓库 README。
 
             SHA-256: ${{ steps.checksum.outputs.sha256 }}
 
@@ -156,7 +202,7 @@ jobs:
 
             ## English
 
-            Automatically built Windows x64 release of EFT Task Assistant. Run the executable directly; Python is not required. Create the administrator account on the host computer on first launch. See the repository README for setup and usage.
+            Automatically built Windows x64 release of EFT Task Assistant. Run the executable directly; Python is not required. Desktop data stays on the local computer and no account login is needed. A phone can read the map over the LAN after QR pairing. See the repository README for setup and usage.
 
             SHA-256: ${{ steps.checksum.outputs.sha256 }}
 

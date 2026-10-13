@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#101113">
+  <meta name="theme-color" content="#000000">
   <title>随身战局地图 · EFT 任务助手</title>
   <link rel="stylesheet" href="/assets/mobile.css">
 </head>
@@ -12,7 +12,7 @@
     <div class="mobile-brand-mark" aria-hidden="true">E</div>
     <p class="mobile-eyebrow">EFT TASK ASSISTANT</p>
     <h1>随身战局地图</h1>
-    <p id="gateMessage" class="gate-message">请从电脑端扫描手机地图二维码进入，无需再次登录。</p>
+    <p id="gateMessage" class="gate-message">请扫描电脑端生成的二维码，只读查看地图和任务；无需账号。</p>
     <button id="gateRetryButton" class="mobile-button mobile-button-primary" type="button" hidden>重新尝试</button>
     <a class="gate-home-link" href="/">返回电脑端</a>
   </main>
@@ -23,13 +23,13 @@
         <div class="mobile-brand-mark" aria-hidden="true">E</div>
         <div>
           <p class="mobile-eyebrow">随身战局地图</p>
-          <strong id="mobilePlayerName">玩家</strong>
+          <strong id="mobilePlayerName">档案</strong>
         </div>
       </div>
       <div class="mobile-top-actions">
         <button id="mobileThemeButton" class="icon-button" type="button" aria-label="切换主题" title="切换主题">☼</button>
         <button id="mobileRefreshButton" class="icon-button" type="button" aria-label="刷新地图" title="刷新地图">↻</button>
-        <button id="mobileLogoutButton" class="icon-button mobile-logout" type="button" aria-label="退出手机会话" title="退出">退出</button>
+        <button id="mobileLogoutButton" class="icon-button mobile-logout" type="button" aria-label="结束手机访问" title="结束访问">结束</button>
       </div>
     </header>
 
@@ -42,13 +42,16 @@
         <span title="切换楼层只更换底图，标点保持不变">楼层</span>
         <select id="mobileFloorSelect" disabled aria-label="选择楼层"><option>—</option></select>
       </label>
-      <div id="mobileAnnotationFilters" class="mobile-annotation-filters" role="group" aria-label="地图标注">
-        <span class="mobile-annotation-filter-title">地图标注</span>
+      <details id="mobileAnnotationFilters" class="mobile-annotation-filters" aria-label="地图标注筛选" open>
+        <summary class="mobile-annotation-filter-heading">
+          <span class="mobile-annotation-filter-title">地图标注</span>
+          <span class="mobile-annotation-filter-chevron" aria-hidden="true"></span>
+        </summary>
         <label><input type="checkbox" data-map-annotation-filter="location" checked><span class="annotation-swatch is-location" aria-hidden="true"></span>地点</label>
         <label><input type="checkbox" data-map-annotation-filter="pmc-exit"><span class="annotation-swatch is-pmc" aria-hidden="true"></span>PMC撤离</label>
         <label><input type="checkbox" data-map-annotation-filter="scav-exit"><span class="annotation-swatch is-scav" aria-hidden="true"></span>SCAV撤离</label>
         <label><input type="checkbox" data-map-annotation-filter="transfer"><span class="annotation-swatch is-transfer" aria-hidden="true"></span>转移点</label>
-      </div>
+      </details>
     </section>
 
     <section id="mobileMapViewport" class="mobile-map-viewport" aria-label="任务地图">
@@ -66,7 +69,9 @@
       <div id="mobileMapError" class="mobile-map-error" hidden></div>
     </section>
 
-    <section class="mobile-task-panel" aria-label="本局任务">
+    <div id="mobileTaskPanelResizer" class="mobile-task-panel-resizer" role="separator" aria-orientation="horizontal" aria-controls="mobileTaskPanel" aria-label="拖动调整地图和本局任务区域大小" tabindex="0"></div>
+
+    <section id="mobileTaskPanel" class="mobile-task-panel" aria-label="本局任务">
       <div class="mobile-task-heading">
         <div>
           <p class="mobile-eyebrow">RAID CHECKLIST</p>
@@ -95,7 +100,6 @@
     <div id="mobilePointMeta" class="point-meta"></div>
     <div id="mobilePointImages" class="mobile-point-images"></div>
     <div class="point-dialog-actions">
-      <button id="mobilePointVisit" class="mobile-button mobile-button-secondary" type="button">标记已到访</button>
       <a id="mobilePointSource" class="mobile-button mobile-button-secondary" target="_blank" rel="noopener noreferrer" hidden>查看来源</a>
     </div>
   </dialog>

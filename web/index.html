@@ -4,36 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <meta name="theme-color" content="#0b0b0c">
+  <meta name="theme-color" content="#000000">
   <title>EFT 任务助手</title>
   <link rel="stylesheet" href="/assets/styles.css">
 </head>
 <body>
-  <section id="authScreen" class="auth-screen" hidden>
-    <article class="auth-card panel">
-      <div class="brand-lockup">
-        <div class="brand-mark" aria-hidden="true">E</div>
-        <div>
-          <div class="eyebrow">玩家数据隔离</div>
-          <h1>EFT 任务助手</h1>
-        </div>
-      </div>
-      <button id="authLanguageToggle" class="language-toggle auth-language-toggle" type="button" aria-label="Switch to English" title="Switch to English">
-        <span id="authLanguageToggleLabel">EN</span>
-      </button>
-      <p class="auth-description">登录后查看自己的任务、截图、档案和地图标注；不同玩家的数据彼此隔离。</p>
-      <form id="authForm" class="auth-form">
-        <label>玩家名称<input id="authUsername" name="username" required maxlength="32" autocomplete="username" placeholder="输入玩家名称"></label>
-        <label>密码<input id="authPassword" name="password" type="password" required minlength="8" maxlength="256" autocomplete="current-password" placeholder="至少 8 个字符"></label>
-        <p id="authError" class="auth-error" role="alert" hidden></p>
-        <button id="authSubmitButton" class="button button-primary" type="submit">登录</button>
-      </form>
-      <button id="authModeButton" class="button button-quiet auth-mode-button" type="button">创建新玩家账号</button>
-      <p id="firstAccountNotice" class="auth-notice" hidden>首次创建的管理员账号请在运行服务的电脑上完成；之后才可从局域网注册其他账号。</p>
-    </article>
-  </section>
-
-  <main id="appShell" class="app-shell" hidden>
+  <main id="appShell" class="app-shell">
     <header class="topbar">
       <div class="brand-lockup">
         <div class="brand-mark" aria-hidden="true">E</div>
@@ -50,10 +26,6 @@
           <span id="themeToggleIcon" class="theme-toggle-icon" aria-hidden="true">☼</span>
           <span id="themeToggleLabel">白天模式</span>
         </button>
-        <div id="playerSession" class="player-session" hidden>
-          <span id="currentPlayerName"></span>
-          <button id="logoutButton" class="button button-quiet button-small" type="button">退出</button>
-        </div>
         <div class="topbar-status">
           <span class="status-dot"></span>
           <span id="connectionState">连接本地服务…</span>
@@ -105,7 +77,7 @@
         </div>
         <div id="captureHistory" class="capture-history" aria-label="最近截图记录"></div>
         <p id="screenshotDirectoryStatus" class="muted capture-cache-note">尚未选择截图文件夹。截图只会在浏览器授权后读取。</p>
-        <p class="muted capture-cache-note">本机文件夹路径仅保存在当前浏览器；导入的截图与识别结果按玩家账号保存在服务端最近 10 条记录中。</p>
+        <p class="muted capture-cache-note">截图目录授权保存在当前浏览器；截图和识别记录保存在本机，最多保留最近 10 条。</p>
         <div id="analysisSummary" class="analysis-summary" role="status" aria-live="polite">尚未识别页面</div>
         <div id="screenshotCandidates" class="screenshot-candidates" hidden></div>
       </article>
@@ -305,7 +277,7 @@
           <div id="logPath" class="muted log-path"></div>
         </div>
       </div>
-      <p class="privacy-note">截图仅在浏览器授权后从本机文件夹读取并上传到服务端，按玩家账号隔离，最多保留最近 10 次；待添加候选只保留任务文字资料直到加入清单。日志仅记录识别证据、操作和错误。</p>
+      <p class="privacy-note">截图仅在本机浏览器授权后读取，并发送到本机服务进行识别；最多保留最近 10 次。截图不会上传到云端，日志仅记录识别证据、操作和错误。</p>
       </div>
     </details>
 
@@ -332,7 +304,7 @@
       </div>
       <button id="closeMobilePairingButton" class="button button-secondary button-small" type="button">关闭</button>
     </div>
-    <p class="mobile-pairing-intro">用手机扫描二维码即可进入，不需要再次登录。二维码两分钟内有效、只能使用一次；关闭窗口会撤销未使用的二维码。</p>
+    <p class="mobile-pairing-intro">手机扫码后可只读查看地图和当前档案任务，无需账号或证书。二维码两分钟内有效、只能使用一次；关闭窗口会撤销未使用的二维码。</p>
     <div id="mobilePairingNotice" class="mobile-pairing-notice" role="status" hidden></div>
     <div id="mobilePairingContent" class="mobile-pairing-content" hidden>
       <label class="mobile-pairing-address">选择手机所在网络<select id="mobilePairingAddress" aria-label="选择局域网地址"></select></label>
@@ -388,7 +360,7 @@
       <div class="eyebrow">NEW PROFILE</div>
       <h2 id="profileDialogTitle">新建游戏档案</h2>
       <label>档案名称<input name="name" required placeholder="例如：主 PvE 档"></label>
-      <label>游戏模式
+      <label id="profileModeField">游戏模式
         <select name="game_mode">
           <option value="pve">PvE</option>
           <option value="regular">PvP</option>

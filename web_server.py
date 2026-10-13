@@ -425,10 +425,12 @@ class AssistantState:
         store: TaskStore | None = None,
         player: Player | None = None,
         recover_empty_capture_candidates: bool = False,
+        require_profile_name: bool = False,
     ) -> None:
         self.store = store or TaskStore()
         self.player = player
         self.recover_empty_capture_candidates = recover_empty_capture_candidates
+        self.profile_name_required = require_profile_name
         self.analyzer = PageAnalyzer()
         self.lock = threading.RLock()
         self.capture_lock = threading.Lock()
@@ -621,6 +623,16 @@ class AssistantState:
         )
         return profile
 
+    def name_initial_profile(self, name: str) -> Profile:
+        with self.lock:
+            if not self.profile_name_required:
+                raise ValueError("当前档案无需首次命名。")
+            profile = self.store.rename_profile(self.selected_profile_id, name)
+            self.store.set_app_setting("profile_name_setup_complete", "1")
+            self.profile_name_required = False
+        log_event("local_profile_named", profile_id=profile.id, name=profile.name)
+        return profile
+
     def snapshot(self) -> dict[str, Any]:
         with self.lock:
             selected_profile_id = self.selected_profile_id
@@ -772,6 +784,7 @@ class AssistantState:
             "player": self.player.public_data() if self.player else None,
             "profiles": [_profile_json(profile) for profile in profiles],
             "selected_profile_id": selected_profile_id,
+            "profile_name_required": self.profile_name_required,
             "trader_order": list(MERCHANT_CARD_ORDER),
             "tasks": task_payloads,
             "catalog": catalog_snapshot,
@@ -2007,6 +2020,7 @@ class AssistantState:
 class PlayerStateManager:
     def __init__(self, data_root: Path | None = None) -> None:
         self.auth = PlayerAuthStore(data_root)
+        self.local_player = self.auth.local_player()
         self._states: dict[str, AssistantState] = {}
         self._lock = threading.RLock()
 
@@ -2014,7 +2028,24 @@ class PlayerStateManager:
         with self._lock:
             assistant = self._states.get(player.id)
             if assistant is None:
-                store = TaskStore(self.auth.database_path(player))
+                database_path = self.auth.database_path(player)
+                database_existed = database_path.exists()
+                store = TaskStore(database_path)
+                profile_name_setup = store.get_app_setting("profile_name_setup_complete")
+                if profile_name_setup is None:
+                    profiles = store.list_profiles()
+                    is_unnamed_default_profile = (
+                        len(profiles) == 1
+                        and profiles[0].name == "PvE 默认档"
+                        and not store.list_tasks(profiles[0].id)
+                    )
+                    require_profile_name = not database_existed or is_unnamed_default_profile
+                    store.set_app_setting(
+                        "profile_name_setup_complete",
+                        "0" if require_profile_name else "1",
+                    )
+                else:
+                    require_profile_name = profile_name_setup != "1"
                 shared_catalog_path = default_database_path()
                 recover_empty_capture_candidates = False
                 if store.path.resolve() != shared_catalog_path.resolve():
@@ -2038,6 +2069,7 @@ class PlayerStateManager:
                     store=store,
                     player=player,
                     recover_empty_capture_candidates=recover_empty_capture_candidates,
+                    require_profile_name=require_profile_name,
                 )
                 self._states[player.id] = assistant
             return assistant
@@ -2050,7 +2082,25 @@ class PlayerStateManager:
             assistant.close()
 
 
-def _make_handler(state: PlayerStateManager) -> type[BaseHTTPRequestHandler]:
+def _make_handler(
+    state: PlayerStateManager,
+    mobile_access_info: dict[str, Any] | None = None,
+    mobile_only: bool = False,
+) -> type[BaseHTTPRequestHandler]:
+    mobile_network = mobile_access_info if mobile_access_info is not None else {}
+    mobile_get_paths = {
+        "/api/mobile/state",
+        "/api/maps",
+        "/api/map",
+        "/api/map/image",
+    }
+    mobile_static_paths = {
+        "/mobile",
+        "/assets/mobile.js",
+        "/assets/mobile.css",
+        "/favicon.ico",
+    }
+
     class Handler(BaseHTTPRequestHandler):
         server_version = "EFTTaskAssistant/0.1"
 
@@ -2100,47 +2150,47 @@ def _make_handler(state: PlayerStateManager) -> type[BaseHTTPRequestHandler]:
             session = cookie.get("eft_player_session")
             return session.value if session else None
 
-        def _current_player(self) -> Player | None:
-            return state.auth.authenticate(self._session_token())
+        def _is_loopback_client(self) -> bool:
+            try:
+                address = ipaddress.ip_address(self.client_address[0].split("%", 1)[0])
+            except ValueError:
+                return False
+            return address.is_loopback or bool(address.ipv4_mapped and address.ipv4_mapped.is_loopback)
 
         def _require_player(self) -> Player:
-            player = self._current_player()
-            if player is None:
-                raise APIError("请先登录玩家账号。", 401)
-            scope = state.auth.session_scope(self._session_token())
+            token = self._session_token()
+            scope = state.auth.session_scope(token)
+            player = state.auth.authenticate(token)
+            if mobile_only:
+                if player is None or scope != "mobile":
+                    raise APIError("请从本机扫描二维码连接手机地图。", 401)
+                if not self._mobile_api_allowed():
+                    raise APIError("手机端仅可读取地图和任务信息。", 403)
+                return player
+            if self._is_loopback_client():
+                if player is not None and scope == "mobile":
+                    if not self._mobile_api_allowed():
+                        raise APIError("手机端仅可读取地图和任务信息。", 403)
+                    return player
+                return state.local_player
+            if player is None or scope != "mobile":
+                raise APIError("局域网入口仅提供已配对手机的只读地图。", 403)
             if scope == "mobile" and not self._mobile_api_allowed():
-                raise APIError("手机会话仅可访问地图和任务进度接口。", 403)
+                raise APIError("手机端仅可读取地图和任务信息。", 403)
             return player
 
         def _mobile_api_allowed(self) -> bool:
-            path = urlparse(self.path).path
-            if self.command == "GET":
-                return path in {
-                    "/api/mobile/state",
-                    "/api/maps",
-                    "/api/map",
-                    "/api/map/image",
-                }
-            if self.command != "POST":
-                return False
-            if path == "/api/map/markers/visit":
-                return True
-            parts = path.strip("/").split("/")
-            if len(parts) == 5 and parts[:2] == ["api", "tasks"] and parts[3] == "requirements":
-                return parts[2].isdigit() and parts[4].isdigit()
-            if len(parts) == 6 and parts[:2] == ["api", "tasks"] and parts[3] == "requirements" and parts[5] == "count":
-                return parts[2].isdigit() and parts[4].isdigit()
-            return False
+            return self.command == "GET" and urlparse(self.path).path in mobile_get_paths
 
-        @staticmethod
-        def _session_cookie(token: str, max_age: int) -> tuple[str, str]:
+        def _session_cookie(self, token: str, max_age: int) -> tuple[str, str]:
             cookie = SimpleCookie()
-            cookie["eft_player_session"] = token
-            cookie["eft_player_session"]["path"] = "/"
-            cookie["eft_player_session"]["httponly"] = True
-            cookie["eft_player_session"]["samesite"] = "Strict"
-            cookie["eft_player_session"]["max-age"] = str(max_age)
-            return "Set-Cookie", cookie["eft_player_session"].OutputString()
+            cookie_name = "eft_player_session"
+            cookie[cookie_name] = token
+            cookie[cookie_name]["path"] = "/"
+            cookie[cookie_name]["httponly"] = True
+            cookie[cookie_name]["samesite"] = "Strict"
+            cookie[cookie_name]["max-age"] = str(max_age)
+            return "Set-Cookie", cookie[cookie_name].OutputString()
 
         def _enforce_same_origin(self) -> None:
             origin = self.headers.get("Origin")
@@ -2201,6 +2251,14 @@ def _make_handler(state: PlayerStateManager) -> type[BaseHTTPRequestHandler]:
         def do_GET(self) -> None:
             path = urlparse(self.path).path
             try:
+                if mobile_only and path == "/":
+                    self.send_response(302)
+                    self.send_header("Location", "/mobile")
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                    return
+                if mobile_only and path not in mobile_static_paths | mobile_get_paths:
+                    raise APIError("局域网入口仅提供手机地图页面和只读接口。", 403)
                 if path == "/":
                     self._send_static("index.html")
                 elif path == "/mobile":
@@ -2217,28 +2275,25 @@ def _make_handler(state: PlayerStateManager) -> type[BaseHTTPRequestHandler]:
                     self.send_response(204)
                     self.send_header("Cache-Control", "no-store")
                     self.end_headers()
-                elif path == "/api/auth/status":
-                    player = self._current_player()
-                    self._send_json(
-                        200,
-                        {
-                            "authenticated": player is not None,
-                            "player": player.public_data() if player else None,
-                            "needs_setup": not state.auth.has_players(),
-                        },
-                    )
                 else:
                     player = self._require_player()
                     assistant = state.state_for(player)
                     if path == "/api/mobile/info":
-                        self._send_json(200, _mobile_lan_info(self.server))
+                        self._send_json(200, mobile_network)
                     elif path == "/api/mobile/state":
                         snapshot = assistant.snapshot()
+                        selected_profile = next(
+                            (
+                                profile
+                                for profile in snapshot["profiles"]
+                                if profile["id"] == snapshot["selected_profile_id"]
+                            ),
+                            None,
+                        )
                         self._send_json(
                             200,
                             {
-                                "player": snapshot["player"],
-                                "profiles": snapshot["profiles"],
+                                "profiles": [selected_profile] if selected_profile else [],
                                 "selected_profile_id": snapshot["selected_profile_id"],
                                 "tasks": snapshot["tasks"],
                             },
@@ -2301,6 +2356,8 @@ def _make_handler(state: PlayerStateManager) -> type[BaseHTTPRequestHandler]:
         def do_POST(self) -> None:
             path = urlparse(self.path).path
             try:
+                if mobile_only and path not in {"/api/auth/mobile-pair", "/api/auth/logout"}:
+                    raise APIError("局域网入口仅提供手机地图只读访问。", 403)
                 self._enforce_same_origin()
                 if path == "/api/capture/upload":
                     player = self._require_player()
@@ -2312,29 +2369,6 @@ def _make_handler(state: PlayerStateManager) -> type[BaseHTTPRequestHandler]:
                     )
                     return
                 payload = self._read_json()
-                if path == "/api/auth/register":
-                    if not state.auth.has_players():
-                        try:
-                            is_loopback = ipaddress.ip_address(self.client_address[0]).is_loopback
-                        except ValueError:
-                            is_loopback = False
-                        if not is_loopback:
-                            raise APIError("首次创建管理员账号请在运行服务的电脑上通过本机地址完成。", 403)
-                    try:
-                        player, token = state.auth.register(
-                            str(payload.get("username", "")),
-                            str(payload.get("password", "")),
-                        )
-                    except ValueError as error:
-                        raise APIError(str(error)) from error
-                    state.state_for(player)
-                    log_event("player_registered", player_id=player.id, is_admin=player.is_admin)
-                    self._send_json(
-                        201,
-                        {"player": player.public_data()},
-                        (self._session_cookie(token, 30 * 24 * 60 * 60),),
-                    )
-                    return
                 if path == "/api/auth/mobile-pair":
                     result = state.auth.consume_mobile_pairing_token(
                         str(payload.get("token", ""))
@@ -2350,27 +2384,10 @@ def _make_handler(state: PlayerStateManager) -> type[BaseHTTPRequestHandler]:
                         (self._session_cookie(token, SESSION_LIFETIME_SECONDS),),
                     )
                     return
-                if path == "/api/auth/login":
-                    try:
-                        result = state.auth.login(
-                            str(payload.get("username", "")),
-                            str(payload.get("password", "")),
-                        )
-                    except ValueError as error:
-                        raise APIError(str(error)) from error
-                    if result is None:
-                        raise APIError("玩家名称或密码错误。", 401)
-                    player, token = result
-                    state.state_for(player)
-                    log_event("player_logged_in", player_id=player.id)
-                    self._send_json(
-                        200,
-                        {"player": player.public_data()},
-                        (self._session_cookie(token, 30 * 24 * 60 * 60),),
-                    )
-                    return
                 if path == "/api/auth/logout":
                     token = self._session_token()
+                    if state.auth.session_scope(token) != "mobile":
+                        raise APIError("没有可退出的手机会话。", 401)
                     state.auth.logout(token)
                     self._send_json(
                         200,
@@ -2380,11 +2397,14 @@ def _make_handler(state: PlayerStateManager) -> type[BaseHTTPRequestHandler]:
                     return
                 player = self._require_player()
                 assistant = state.state_for(player)
-                if path == "/api/mobile/pairing":
-                    network = _mobile_lan_info(self.server)
-                    if not network["lan_enabled"]:
+                if path == "/api/profiles/name":
+                    profile = assistant.name_initial_profile(str(payload.get("name", "")))
+                    self._send_json(200, {"profile": _profile_json(profile)})
+                elif path == "/api/mobile/pairing":
+                    network = mobile_network
+                    if not network.get("lan_enabled"):
                         raise APIError(
-                            "手机扫码需要局域网监听。请设置 EFT_TASK_ASSISTANT_HOST=0.0.0.0 后重启服务。",
+                            "手机地图服务未能启动；请检查端口占用和 Windows 防火墙。",
                             409,
                         )
                     try:
@@ -2518,11 +2538,31 @@ def _make_handler(state: PlayerStateManager) -> type[BaseHTTPRequestHandler]:
     return Handler
 
 
-def _bind_server(state: PlayerStateManager) -> ThreadingHTTPServer:
-    handler = _make_handler(state)
+def _bind_server(
+    state: PlayerStateManager,
+    handler: type[BaseHTTPRequestHandler] | None = None,
+) -> ThreadingHTTPServer:
+    request_handler = handler or _make_handler(state)
     last_error: OSError | None = None
-    host = os.environ.get("EFT_TASK_ASSISTANT_HOST", "127.0.0.1").strip() or "127.0.0.1"
+    host = "127.0.0.1"
     for port in range(8765, 8786):
+        try:
+            server = ThreadingHTTPServer((host, port), request_handler)
+            server.daemon_threads = True
+            return server
+        except OSError as error:
+            if error.errno != errno.EADDRINUSE and getattr(error, "winerror", None) != 10048:
+                raise
+            last_error = error
+    raise RuntimeError(f"无法在 {host}:8765-8785 启动桌面本地服务：{last_error}")
+
+
+def _bind_mobile_server(
+    handler: type[BaseHTTPRequestHandler],
+) -> ThreadingHTTPServer:
+    last_error: OSError | None = None
+    host = "0.0.0.0"
+    for port in range(8766, 8787):
         try:
             server = ThreadingHTTPServer((host, port), handler)
             server.daemon_threads = True
@@ -2531,7 +2571,7 @@ def _bind_server(state: PlayerStateManager) -> ThreadingHTTPServer:
             if error.errno != errno.EADDRINUSE and getattr(error, "winerror", None) != 10048:
                 raise
             last_error = error
-    raise RuntimeError(f"无法在 {host}:8765-8785 启动本地服务：{last_error}")
+    raise RuntimeError(f"无法启动手机只读服务（{host}:8766-8786）：{last_error}")
 
 
 def _configure_console_encoding() -> None:
@@ -2544,17 +2584,38 @@ def main() -> int:
     _configure_console_encoding()
     configure_logging()
     state = PlayerStateManager()
+    mobile_access_info: dict[str, Any] = {}
+    handler = _make_handler(state, mobile_access_info)
     try:
-        server = _bind_server(state)
+        server = _bind_server(state, handler)
     except Exception:
         state.close()
         raise
     url = f"http://127.0.0.1:{server.server_port}/"
-    bind_host = str(server.server_address[0])
-    log_event("web_server_started", url=url, bind_host=bind_host, local_only=bind_host == "127.0.0.1")
+    mobile_server: ThreadingHTTPServer | None = None
+    mobile_thread: threading.Thread | None = None
+    try:
+        mobile_handler = _make_handler(state, mobile_access_info, mobile_only=True)
+        mobile_server = _bind_mobile_server(mobile_handler)
+        mobile_access_info.update(_mobile_lan_info(mobile_server))
+        mobile_thread = threading.Thread(
+            target=mobile_server.serve_forever,
+            name="eft-task-assistant-mobile",
+            daemon=True,
+        )
+        mobile_thread.start()
+    except Exception as error:
+        log_event("mobile_lan_start_failed", level=logging.ERROR, error=repr(error))
+        print(f"手机局域网只读服务未能启动：{error}", flush=True)
+    log_event("web_server_started", url=url, bind_host="127.0.0.1", local_only=True)
     print(f"EFT 任务助手网页已启动：{url}", flush=True)
-    if bind_host == "0.0.0.0":
-        print("局域网访问已启用：其他设备使用本机局域网 IP 和相同端口；HTTP 不加密，请仅在可信网络中使用。", flush=True)
+    if mobile_server is not None:
+        addresses = mobile_access_info.get("addresses", [])
+        print("手机只读地图局域网入口（扫码配对后可访问）：", flush=True)
+        for address in addresses:
+            print(f"  http://{address}:{mobile_server.server_port}/mobile", flush=True)
+        if not addresses:
+            print("未检测到可用的局域网 IPv4 地址。", flush=True)
     print(f"诊断日志：{log_path()}", flush=True)
     webbrowser.open(url, new=2)
     try:
@@ -2562,6 +2623,11 @@ def main() -> int:
     except KeyboardInterrupt:
         pass
     finally:
+        if mobile_server is not None:
+            mobile_server.shutdown()
+            mobile_server.server_close()
+        if mobile_thread is not None:
+            mobile_thread.join(timeout=2)
         server.shutdown()
         server.server_close()
         state.close()

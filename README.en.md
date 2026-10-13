@@ -16,7 +16,7 @@
 - [Screenshot recognition](#screenshot-recognition)
 - [Quest list and maps](#quest-list-and-maps)
 - [Hideout planning](#hideout-planning)
-- [LAN access and privacy](#lan-access-and-privacy)
+- [Mobile LAN access and privacy](#mobile-lan-access-and-privacy)
 - [Back up your data](#back-up-your-data)
 - [Troubleshooting](#troubleshooting)
 - [Development and build](#development-and-build)
@@ -29,9 +29,9 @@
 - **Quest tracking:** Filter by trader or map, check off individual objectives or track item counts, collapse quest cards, toggle hidden quests, add or remove quests manually, and undo recent actions.
 - **Key checklist:** Summarize keys required by tracked quests, see which quests need them, and review prompts when new keys appear.
 - **Quest maps:** View objectives, source images, and location notes. Switch map backgrounds by floor, zoom and pan, mark points as visited, and draw routes. Changing floors only changes the background; markers for all floors remain visible.
-- **Mobile companion map:** Generate a one-time QR code on the computer, then scan it to open the map and current quest checklist on a phone without entering account credentials. Quest progress and visited markers sync to the active player profile.
+- **Mobile companion map:** Generate a one-time pairing QR code on the computer to view the map, markers, and current profile's quests on a phone. The phone has read-only access.
 - **Hideout planning:** Select stations and target levels, include prerequisite stations automatically, and total required materials while tracking what you already own.
-- **Player settings:** Use separate player accounts and PvE, regular PvP, or season PvP profiles. The interface supports Chinese and English, plus light and dark themes.
+- **Local profiles:** No account or sign-in. Enter a profile name on first launch (PvE by default); profiles and game data stay on that computer. Each player runs the complete app on their own computer.
 
 ## Install and run
 
@@ -39,7 +39,7 @@
 
 Download and run `EFTTaskAssistant-vVERSION-Windows-x64.exe` from [GitHub Releases](https://github.com/xxtra1112/eft-task-assistant/releases).
 
-The app starts a local web server and attempts to open your browser. Create the administrator account on this computer the first time you run it.
+The app starts a local web server and attempts to open your browser. The desktop server binds only to `127.0.0.1`, so other computers cannot access the desktop management interface. Enter a profile name on first launch; each computer keeps its own data.
 
 The default address is `http://127.0.0.1:8765/`. If the port is busy, the app tries ports `8766` through `8785`; use the address and port printed in the launch window. Keep that window open while using the app. Closing it stops the service. The prebuilt executable does not require Python or Conda.
 
@@ -62,17 +62,16 @@ Internet access is needed for the initial dependency installation and online cat
 
 ## First-time setup
 
-1. **Create an account.** The first account becomes the administrator and must be created on the computer hosting the service, using its local address. Player names must be 1–32 characters with no spaces; passwords must be at least 8 characters. Other players can register afterward.
-2. **Create a game profile.** Choose PvE, regular PvP, or season PvP. Quest progress is stored separately for each profile.
-3. **Load quest data.** Expand **Quest List → Import from EFTarkov quest catalog** and select **Sync public catalog**. Once synced, search, preview, and import quests. Online data may change or be temporarily unavailable.
-4. **Choose your screenshot folder.** Sign in, select **Choose screenshot folder**, choose the game's actual `Screenshots` directory, and grant the browser permission when prompted.
-5. **Start planning.** Review the quest list, filter by map, check your keys, and choose Hideout stations and target levels.
+1. **Create a profile.** Enter a profile name on first launch to get started; the initial profile defaults to PvE. You can later create additional profiles for PvE, regular PvP, or season PvP saves.
+2. **Load quest data.** Expand **Quest List → Import from EFTarkov quest catalog** and select **Sync public catalog**. Once synced, search, preview, and import quests. Online data may change or be temporarily unavailable.
+3. **Choose your screenshot folder.** Select **Choose screenshot folder**, choose the game's actual `Screenshots` directory on this computer, and grant the browser permission when prompted.
+4. **Start planning.** Review the quest list, filter by map, check your keys, and choose Hideout stations and target levels.
 
 ## Screenshot recognition
 
 The app reads screenshots from the folder selected in the **browser's device**. It does not guess or read a hard-coded Windows user path. Choose the `Screenshots` folder used by your Escape from Tarkov installation. Supported image formats are PNG, JPG/JPEG, and WebP.
 
-For local use at `127.0.0.1`, the latest Chrome or Edge is recommended. If the browser supports persistent directory access, the app imports recent screenshots and watches for new ones. If the browser does not support that feature—or you open the app over a LAN address—you may need to select the folder again to scan it. Changing browsers, clearing site data, or switching player accounts may also require new permission.
+For local use at `127.0.0.1`, the latest Chrome or Edge is recommended. The screenshot folder is authorized and read by the browser on the computer running the app. Other computers do not access the desktop interface or monitor/read its screenshots.
 
 Recognition results list the quests matched in each screenshot. Matched quests are automatically added to the selected profile. OCR runs locally on the computer hosting the assistant; screenshots are not sent to a cloud AI model. Recognition can be affected by the game language, screenshot crop, resolution, and interface changes, so review the results.
 
@@ -92,31 +91,23 @@ In **Upgrade Targets**, select Hideout stations and target levels. A target may 
 
 **Reset levels** clears station selections and target levels. **Reset owned quantities** clears the material counts you entered. These actions are separate.
 
-## LAN access and privacy
+## Mobile LAN access and privacy
 
-By default, the service accepts connections only from the computer running it. To allow other devices on a trusted local network, set the host before launching the app in PowerShell:
+The desktop app is local to one computer. Each player runs the complete executable on their own computer and names a local profile; no account or password is used. The desktop page and management API bind only to `127.0.0.1`. The app starts a separate LAN endpoint for the phone map; paired phones can only read maps and the active profile's quests, not change quests, progress, or markers.
 
-~~~powershell
-$env:EFT_TASK_ASSISTANT_HOST = "0.0.0.0"
-$exe = (Get-ChildItem -File 'EFTTaskAssistant-v*-Windows-x64.exe' | Select-Object -First 1).FullName
-& $exe
-~~~
+Connect the phone and computer to the same trusted LAN. On the computer, open **Quest Map**, choose **Mobile Map QR**, and scan the code. No account, password, or certificate download is needed. Each QR code expires after two minutes and works once; a paired phone receives restricted read-only access. Closing the desktop dialog revokes an unused code, and the phone can end its access. Do not share the QR code or paired phone page with anyone you do not trust, and never forward the phone service port to the public internet.
 
-Run `ipconfig` on the host computer to find its LAN IPv4 address. On another device, open `http://<host-LAN-IP>:<port-shown-at-startup>/`. If it does not connect, check that Windows Firewall allows the app on a **Private network**. Do not forward the port to the public internet.
+If the phone cannot connect, confirm both devices are on the same LAN and allow the app through Windows Firewall on **Private networks** only; do not allow it on public networks. Use `ipconfig` to find the computer's LAN IPv4 address. The desktop port starts at `8765`; the phone read-only service starts at `8766`. If a port is busy, the app tries the following ports automatically.
 
-Sign in on the computer, open **Quest Map**, choose **Mobile Map QR**, select the network address your phone uses, and scan the code. The phone opens `/mobile` directly—no account creation, password, or second sign-in is needed. Each QR code expires after two minutes and can be redeemed once. A paired phone receives a restricted 30-day session that can read maps and the active profile's quests, update objective progress, and mark locations visited. Sign out from the phone to end its session; closing the desktop dialog revokes an unused QR code. Do not share the QR code or mobile page with anyone you do not trust.
+Quests, profiles, and screenshot-recognition records stay on the computer running the app. Screenshot-folder permission stays in that computer's browser, and screenshots are recognized locally; up to 10 recent records are retained. The phone only reads the host computer's current profile data and never writes progress or visited-marker state back.
 
-LAN mode uses unencrypted HTTP. Do not use it on an untrusted public network or with a sensitive password; others on the network could intercept passwords or session information. Each device should choose its own local game screenshot folder in its browser. The images are sent to the computer hosting the assistant for recognition; other devices do not need—and cannot use—the host's path to access their local game files.
+Hideout upgrade targets, owned material counts, quest and key visibility settings, map route drawings, and other interface preferences are stored in the local browser storage and scoped to the profile. They do not sync to other browsers or devices and are not included in the app data-folder backup below. Clearing browser site data may erase them.
 
-Passwords are stored as PBKDF2 hashes. Screenshot recognition, quests, and profile data are stored on the host computer and isolated by player account. Up to 10 recent screenshot records are retained. Screenshot folder permission stays in the local browser.
-
-Hideout upgrade targets, owned material counts, quest and key visibility settings, map route drawings, and other interface preferences are stored in the current browser's local storage and scoped to the player account and profile. They do not sync to other browsers or devices and are not included in the server data-folder backup below. Clearing browser site data may erase them.
-
-Screenshots are not sent to cloud AI; when syncing quest, map, or Hideout data, the app accesses public sources such as [EFTarkov](https://www.eftarkov.com/) and [Tarkov.dev](https://tarkov.dev/). If an item image cannot load from its primary host, the browser retries the same public image through [wsrv.nl](https://wsrv.nl/); no account data, screenshots, or quest list is sent.
+Screenshots are not sent to cloud AI; when syncing quest, map, or Hideout data, the app accesses public sources such as [EFTarkov](https://www.eftarkov.com/) and [Tarkov.dev](https://tarkov.dev/). If an item image cannot load from its primary host, the browser retries the same public image through [wsrv.nl](https://wsrv.nl/); no profile data, screenshots, or quest list is sent.
 
 ## Back up your data
 
-By default, app data is stored in `%LOCALAPPDATA%/EFTTaskAssistant`. It includes accounts, quests, profiles, and recognition records. To back up or move your data:
+By default, app data is stored in `%LOCALAPPDATA%/EFTTaskAssistant`. It includes quests, profiles, and recognition records for this computer. To back up or move your data:
 
 1. Close the app and make sure the service has stopped.
 2. Copy the entire `EFTTaskAssistant` folder to a safe location.
@@ -128,15 +119,13 @@ Do not copy SQLite database files while the service is running; the backup may b
 
 **The page did not open.** Make sure the launch window is still running and manually open the `127.0.0.1` address printed there. If the default port was busy, use the next port shown in the window.
 
-**Screenshots are not imported or monitored.** In Chrome or Edge, select the screenshot folder again and grant access. Check that you selected the actual folder and that the files use a supported image format. When using a LAN address, browsers usually cannot continuously monitor a directory; select the folder again to scan it.
+**Screenshots are not imported or monitored.** In Chrome or Edge, select the screenshot folder again and grant access. Check that you selected the actual folder and that the files use a supported image format.
 
 **A quest was missed or matched incorrectly.** Check that the screenshot shows the full trader quest list and that the game language matches the available data. Sync the public quest catalog, then search for or manually add the quest. Always review recognition results.
 
 **Quest or map data will not load.** Public data sync requires internet access. If a source website changes or is temporarily unavailable, try again later. Previously downloaded and cached data may still be available.
 
-**Other devices cannot connect.** Set `EFT_TASK_ASSISTANT_HOST=0.0.0.0` before starting the service, make sure both devices are on the same trusted LAN, use the correct LAN IP and startup port, and check Windows Firewall.
-
-**The phone QR code does not open or has expired.** Start the service with `EFT_TASK_ASSISTANT_HOST=0.0.0.0`, confirm the phone and computer use the same trusted LAN, and generate a fresh code. A QR code expires after two minutes and works once; after pairing, the phone keeps its restricted session without another sign-in.
+**The phone QR code does not open or has expired.** Confirm the phone and computer use the same trusted LAN, allow the app through Windows Firewall on Private networks, and generate a fresh code. No environment variable or certificate is required; a QR code expires after two minutes and works once.
 
 If the problem persists, report it on [GitHub Issues](https://github.com/xxtra1112/eft-task-assistant/issues). Before sharing diagnostics, remove usernames, screenshots, and other personal information.
 
@@ -146,14 +135,14 @@ To build a single-file Windows x64 executable, activate a Conda environment with
 
 ~~~powershell
 python -m pip install -r requirements-build.txt
-& "$PWD/build_windows.ps1" -Version 1.0.0
+& "$PWD/build_windows.ps1" -Version 1.1.0
 ~~~
 
 The executable is written to the `dist` directory. Building requires Windows x64, Python 3.11, and internet access to install and bundle the OCR runtime dependencies. Bug reports and improvement suggestions are welcome on GitHub Issues.
 
 ## Continuous integration and releases
 
-GitHub Actions checks Python dependencies and imports, Python compilation, and frontend JavaScript syntax on pushes to `main`, pull requests, and manual runs. Pushing a new version tag in `vMAJOR.MINOR.PATCH` format (for example, `v1.0.1`) runs a Windows build, starts the executable and checks for an HTTP 200 response, then creates a GitHub Release with the executable, license, third-party notices, and SHA-256 checksum.
+GitHub Actions checks Python dependencies and imports, Python compilation, and frontend JavaScript syntax on pushes to `main`, pull requests, and manual runs. Pushing a new version tag in `vMAJOR.MINOR.PATCH` format (for example, `v1.1.1`) runs a Windows build, starts the executable and checks for an HTTP 200 response, then creates a GitHub Release with the executable, license, third-party notices, and SHA-256 checksum.
 
 ## Data sources and license
 

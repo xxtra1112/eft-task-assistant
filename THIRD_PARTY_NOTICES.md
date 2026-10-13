@@ -8,6 +8,8 @@ The Windows `v1.0.0` executable bundles the following open-source runtime compon
 | OpenCV-Python | 5.0.0.93 | Apache-2.0 |
 | NumPy | 2.4.6 | BSD-3-Clause, 0BSD, MIT, Zlib, and CC0-1.0 components |
 | qrcode | 8.2 | BSD-3-Clause |
+| cffi | 2.1.1 | MIT |
+| pycparser | 3.11 | BSD-3-Clause |
 | ONNX Runtime | 1.30.0 | MIT |
 | PyClipper | 1.4.0 | MIT |
 | Shapely | 2.1.2 | BSD-3-Clause |

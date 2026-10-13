@@ -1,18 +1,5 @@
 const elements = {
-  authScreen: document.querySelector("#authScreen"),
-  authForm: document.querySelector("#authForm"),
-  authUsername: document.querySelector("#authUsername"),
-  authPassword: document.querySelector("#authPassword"),
-  authError: document.querySelector("#authError"),
-  authSubmitButton: document.querySelector("#authSubmitButton"),
-  authModeButton: document.querySelector("#authModeButton"),
-  authLanguageToggle: document.querySelector("#authLanguageToggle"),
-  authLanguageToggleLabel: document.querySelector("#authLanguageToggleLabel"),
-  firstAccountNotice: document.querySelector("#firstAccountNotice"),
   appShell: document.querySelector("#appShell"),
-  playerSession: document.querySelector("#playerSession"),
-  currentPlayerName: document.querySelector("#currentPlayerName"),
-  logoutButton: document.querySelector("#logoutButton"),
   connection: document.querySelector("#connectionState"),
   languageToggle: document.querySelector("#languageToggle"),
   languageToggleLabel: document.querySelector("#languageToggleLabel"),
@@ -122,24 +109,16 @@ const elements = {
   diagnosticsPanel: document.querySelector(".diagnostics-panel"),
   profileDialog: document.querySelector("#profileDialog"),
   profileForm: document.querySelector("#profileForm"),
+  profileDialogTitle: document.querySelector("#profileDialogTitle"),
+  profileModeField: document.querySelector("#profileModeField"),
+  cancelProfileButton: document.querySelector("#cancelProfileButton"),
   seasonField: document.querySelector("#seasonField"),
   toast: document.querySelector("#toast"),
 };
 
 const UI_TRANSLATIONS = Object.freeze({
   "EFT 任务助手": "EFT Task Assistant",
-  "玩家名称": "Player name",
-  "输入玩家名称": "Enter player name",
-  "密码": "Password",
-  "至少 8 个字符": "At least 8 characters",
-  "登录": "Log in",
-  "登录成功": "Signed in",
-  "创建新玩家账号": "Create player account",
-  "已有账号？返回登录": "Already have an account? Sign in",
-  "退出": "Sign out",
-  "玩家数据隔离": "Player data isolation",
   "本地塔科夫助手": "Local Tarkov companion",
-  "首次创建的管理员账号请在运行服务的电脑上完成；之后才可从局域网注册其他账号。": "Create the first administrator account on the computer running the service; additional accounts can then register over the LAN.",
   "切换到白天模式": "Switch to light mode",
   "切换到黑夜模式": "Switch to dark mode",
   "白天模式": "Light mode",
@@ -175,7 +154,8 @@ const UI_TRANSLATIONS = Object.freeze({
   "等待游戏画面": "Waiting for game capture",
   "选择本机游戏截图文件夹后，截图会自动导入并识别": "Choose your local game screenshot folder to import and review captures automatically",
   "尚未选择截图文件夹。截图只会在浏览器授权后读取。": "No screenshot folder selected. The browser reads it only after you grant access.",
-  "本机文件夹路径仅保存在当前浏览器；导入的截图与识别结果按玩家账号保存在服务端最近 10 条记录中。": "The local folder path stays in this browser. The latest 10 captures and results are stored on the server per player account.",
+  "截图目录授权保存在当前浏览器；截图和识别记录保存在本机，最多保留最近 10 条。": "Screenshot-folder access stays in this browser; screenshots and recognition records stay on this computer, with the latest 10 retained.",
+  "当前浏览器不支持持续目录授权；请重新选择截图文件夹进行扫描。": "This browser does not support persistent folder access. Choose the screenshot folder again to scan it.",
   "尚未识别页面": "No page reviewed yet",
   "切换显示隐藏任务": "Toggle hidden quests",
   "切换显示被钥匙筛选隐藏或手动隐藏的任务": "Show or hide quests hidden by key filters or manually",
@@ -225,24 +205,24 @@ const UI_TRANSLATIONS = Object.freeze({
   "手机地图二维码": "Mobile map QR code",
   "MOBILE RAID MAP": "MOBILE RAID MAP",
   "手机随身地图": "Mobile raid map",
-  "用手机扫描二维码即可进入，不需要再次登录。二维码两分钟内有效、只能使用一次；关闭窗口会撤销未使用的二维码。": "Scan with your phone to open the map without signing in again. The QR code expires in two minutes and works once; closing this dialog revokes an unused code.",
+  "手机扫码后可只读查看地图和当前档案任务，无需账号或证书。二维码两分钟内有效、只能使用一次；关闭窗口会撤销未使用的二维码。": "Scan with your phone to read the map and current profile's quests; no account or certificate is needed. The QR code expires in two minutes and works once; closing this dialog revokes an unused code.",
   "选择手机所在网络": "Choose the network used by your phone",
   "选择局域网地址": "Choose LAN address",
   "重新生成二维码": "Generate a new QR code",
   "手机访问地址：": "Phone address: ",
   "二维码有效期：": "QR code expires in: ",
   "秒": "s",
-  "手机扫码需要局域网监听。请设置 EFT_TASK_ASSISTANT_HOST=0.0.0.0 后重启服务。": "LAN listening is required for phone pairing. Set EFT_TASK_ASSISTANT_HOST=0.0.0.0 and restart the service.",
+  "手机地图服务未能启动；请检查端口占用和 Windows 防火墙。": "The phone map service could not start. Check for a port conflict and Windows Firewall settings.",
   "当前没有可用的局域网 IPv4 地址。": "No usable LAN IPv4 address was found.",
   "正在查找局域网地址…": "Looking for LAN addresses…",
   "正在生成二维码…": "Generating QR code…",
   "二维码已过期，请重新生成。": "The QR code expired. Generate a new one.",
   "二维码有效期：": "QR code expires in: ",
-  "扫描后手机将自动进入地图，无需输入账号或密码。": "After scanning, your phone opens the map automatically without a username or password.",
+  "扫描后手机将自动进入只读地图，无需账号或密码。": "After scanning, your phone opens the read-only map automatically; no account or password is needed.",
   "选择地址后生成二维码。": "Choose an address to generate a QR code.",
   "当前档案还没有任务。": "There are no quests in the current profile.",
   "任务地图载入失败。": "The quest map could not be loaded.",
-  "请从电脑端扫描手机地图二维码进入，无需再次登录。": "Scan the mobile map QR code from your computer to continue without signing in again.",
+  "请扫描电脑端生成的二维码，只读查看地图和任务；无需账号。": "Scan the QR code generated on the computer to view the map and quests; no account is needed.",
   "二维码无效或已过期，请回到电脑端重新生成。": "This QR code is invalid or expired. Generate another one on your computer.",
   "当前没有可用的地图点位。": "There are no map markers to show.",
   "已到访": "Visited",
@@ -251,7 +231,9 @@ const UI_TRANSLATIONS = Object.freeze({
   "标记已到访": "Mark visited",
   "取消已到访标记": "Clear visited status",
   "查看来源": "View source",
-  "退出手机会话": "Sign out of mobile session",
+  "结束手机访问": "End phone access",
+  "结束访问": "End access",
+  "结束": "End",
   "没有找到对应任务。": "The related quest was not found.",
   "选择地图": "Select map",
   "楼层": "Floor",
@@ -287,7 +269,7 @@ const UI_TRANSLATIONS = Object.freeze({
   "等待分析结果": "Waiting for analysis",
   "本地运行日志": "Local runtime log",
   "加载中…": "Loading…",
-  "截图仅在浏览器授权后从本机文件夹读取并上传到服务端，按玩家账号隔离，最多保留最近 10 次；待添加候选只保留任务文字资料直到加入清单。日志仅记录识别证据、操作和错误。": "Screenshots are read from the local folder only after browser permission and uploaded per player account; up to 10 recent captures are kept. Pending matches retain quest text only until added. Logs contain recognition evidence, actions, and errors.",
+  "截图仅在本机浏览器授权后读取，并发送到本机服务进行识别；最多保留最近 10 次。截图不会上传到云端，日志仅记录识别证据、操作和错误。": "Screenshots are read with browser permission on this computer and processed by its local service; up to 10 recent captures are kept. Screenshots are not sent to the cloud. Logs contain recognition evidence, actions, and errors.",
   "WAYPOINT IMAGE": "WAYPOINT IMAGE",
   "任务点位": "Quest waypoint",
   "关闭": "Close",
@@ -367,7 +349,6 @@ const UI_TRANSLATIONS = Object.freeze({
   "未能载入地图数据。": "Map data could not be loaded.",
   "截图预览加载失败": "Screenshot preview failed to load",
   "任务已加入当前档案": "Quest added to this profile",
-  "玩家账号已创建": "Player account created",
   "任务已自动完成": "Quest completed automatically",
   "缺少要求": "Objectives remaining",
   "暂无运行日志": "No runtime logs",
@@ -549,11 +530,8 @@ function applyLanguage(language, persist = false) {
   document.title = currentLanguage === "en" ? "EFT Task Assistant" : "EFT 任务助手";
   elements.languageToggleLabel.textContent = currentLanguage === "en" ? "中文" : "EN";
   const targetLanguageLabel = currentLanguage === "en" ? "切换到中文" : "切换到英文";
-  for (const button of [elements.languageToggle, elements.authLanguageToggle]) {
-    button.setAttribute("aria-label", targetLanguageLabel);
-    button.title = targetLanguageLabel;
-  }
-  elements.authLanguageToggleLabel.textContent = elements.languageToggleLabel.textContent;
+  elements.languageToggle.setAttribute("aria-label", targetLanguageLabel);
+  elements.languageToggle.title = targetLanguageLabel;
   localizeElement(document.body);
   if (persist) safeStorageSet("eft-task-assistant-language", currentLanguage);
 }
@@ -585,8 +563,7 @@ languageObserver.observe(document.body, {
 });
 
 let state = null;
-let authMode = "login";
-let needsFirstPlayerSetup = false;
+let profileNameSetupOpen = false;
 let clearTasksBusy = false;
 let operationUndoBusy = false;
 let loadedCaptureId = null;
@@ -1193,11 +1170,6 @@ async function request(path, options = {}) {
   if (!response.ok) {
     const error = new Error(result?.error || `请求失败（${response.status}）`);
     error.status = response.status;
-    if (response.status === 401 && !path.startsWith("/api/auth/")) {
-      authMode = "login";
-      renderAuthMode();
-      showAuthScreen();
-    }
     throw error;
   }
   return result;
@@ -1308,7 +1280,7 @@ async function openMobilePairing() {
     const network = await request("/api/mobile/info");
     if (!elements.mobilePairingDialog.open) return;
     if (!network.lan_enabled) {
-      setMobilePairingNotice("手机扫码需要局域网监听。请设置 EFT_TASK_ASSISTANT_HOST=0.0.0.0 后重启服务。", "error");
+      setMobilePairingNotice("手机地图服务未能启动；请检查端口占用和 Windows 防火墙。", "error");
       return;
     }
     const addresses = Array.isArray(network.addresses) ? network.addresses : [];
@@ -1545,7 +1517,10 @@ async function activateScreenshotFolder(playerId) {
   screenshotFolderInitial = new Set();
   if (!playerId) return;
   if (!window.isSecureContext || typeof window.showDirectoryPicker !== "function") {
-    setScreenshotDirectoryStatus("此访问地址不支持持续监控；点击后选取截图文件夹，每次需要时重新扫描。");
+    setScreenshotDirectoryStatus(window.isSecureContext
+      ? "当前浏览器不支持持续目录授权；请重新选择截图文件夹进行扫描。"
+      : "当前浏览器无法持续读取目录；请重新选择截图文件夹进行扫描。"
+    );
     return;
   }
   try {
@@ -1641,57 +1616,9 @@ async function importSelectedScreenshotFolder() {
   safeStorageSet(storageKey, JSON.stringify(saved));
 }
 
-function renderAuthMode() {
-  const registering = authMode === "register";
-  elements.authSubmitButton.textContent = registering ? "创建账号并进入" : "登录";
-  elements.authModeButton.textContent = registering ? "已有账号？返回登录" : "创建新玩家账号";
-  elements.authPassword.autocomplete = registering ? "new-password" : "current-password";
-  elements.authPassword.placeholder = registering ? "至少 8 个字符" : "输入密码";
-  elements.authPassword.minLength = registering ? 8 : 0;
-  elements.firstAccountNotice.hidden = !registering || !needsFirstPlayerSetup;
-  elements.authError.hidden = true;
-  elements.authError.textContent = "";
-}
-
-function showAuthScreen(message = "") {
-  state = null;
-  elements.authScreen.hidden = false;
-  elements.appShell.hidden = true;
-  elements.playerSession.hidden = true;
-  elements.currentPlayerName.textContent = "";
-  elements.authError.textContent = message;
-  elements.authError.hidden = !message;
-  clearScreenshotPreview();
-  elements.rows.replaceChildren();
-  elements.captureHistory.replaceChildren();
-  elements.screenshotCandidates.replaceChildren();
-  elements.mapMarkers.replaceChildren();
-  elements.mapTargetList.replaceChildren();
-  elements.logs.textContent = "";
-  if (elements.mapPointImageDialog.open) elements.mapPointImageDialog.close();
-  elements.mapPointImageGallery.replaceChildren();
-  loadedCaptureId = null;
-  sourceImage = null;
-}
-
-async function initializeSession() {
-  try {
-    const result = await request("/api/auth/status");
-    needsFirstPlayerSetup = Boolean(result.needs_setup);
-    if (!result.authenticated) {
-      authMode = needsFirstPlayerSetup ? "register" : "login";
-      renderAuthMode();
-      showAuthScreen();
-      return;
-    }
-    await refreshState();
-    await refreshLogs();
-  } catch (error) {
-    setConnection(false);
-    authMode = "login";
-    renderAuthMode();
-    showAuthScreen(error.message);
-  }
+async function initializeLocalApp() {
+  await refreshState();
+  await refreshLogs();
 }
 
 function toast(message) {
@@ -1710,7 +1637,7 @@ function applyTheme(theme, persist = false) {
   elements.themeToggle.setAttribute("aria-pressed", String(normalizedTheme === "dark"));
   elements.themeToggle.setAttribute("aria-label", `切换到${targetTheme === "light" ? "白天" : "黑夜"}模式`);
   elements.themeToggle.title = `切换到${targetTheme === "light" ? "白天" : "黑夜"}模式`;
-  document.querySelector('meta[name="theme-color"]').content = normalizedTheme === "dark" ? "#0b0b0c" : "#f5f5f5";
+  document.querySelector('meta[name="theme-color"]').content = normalizedTheme === "dark" ? "#000000" : "#f5f5f7";
   if (persist) safeStorageSet("eft-task-assistant-theme", normalizedTheme);
 }
 
@@ -1738,6 +1665,30 @@ function renderProfiles(profiles, selectedId) {
   if ([...elements.profile.options].some((option) => option.value === desired)) {
     elements.profile.value = desired;
   }
+}
+
+function openInitialProfileNameDialog() {
+  if (!state?.profile_name_required || profileNameSetupOpen) return;
+  profileNameSetupOpen = true;
+  elements.profileDialog.dataset.initialName = "true";
+  elements.profileDialogTitle.textContent = "给本地档案命名";
+  elements.profileModeField.hidden = true;
+  elements.seasonField.hidden = true;
+  elements.cancelProfileButton.hidden = true;
+  elements.profileForm.querySelector('button[type="submit"]').textContent = "开始使用";
+  elements.profileForm.reset();
+  elements.profileDialog.showModal();
+  elements.profileForm.elements.name.focus();
+}
+
+function resetProfileDialog() {
+  delete elements.profileDialog.dataset.initialName;
+  profileNameSetupOpen = false;
+  elements.profileDialogTitle.textContent = "新建游戏档案";
+  elements.profileModeField.hidden = false;
+  elements.seasonField.hidden = true;
+  elements.cancelProfileButton.hidden = false;
+  elements.profileForm.querySelector('button[type="submit"]').textContent = "创建档案";
 }
 
 function renderCaptureHistory(captures = []) {
@@ -4327,7 +4278,7 @@ function drawScreenshotRegionOverlays(context, imageWidth, imageHeight) {
   const fontSize = Math.max(13, imageWidth * 0.018);
   context.save();
   context.lineWidth = lineWidth;
-  context.font = `700 ${fontSize}px system-ui, sans-serif`;
+  context.font = `700 ${fontSize}px ${getComputedStyle(document.body).fontFamily}`;
   for (const definition of definitions) {
     const bounds = definition.bounds;
     if (!Array.isArray(bounds) || bounds.length !== 4 || !bounds.every((value) => Number.isFinite(Number(value)))) {
@@ -4414,12 +4365,9 @@ async function refreshState() {
       && previousPlayerId === state.player?.id
       && previousProfileId === state.selected_profile_id
       && previousTaskIds !== activeTaskIdSignature(state.tasks);
-    elements.currentPlayerName.textContent = state.player?.username || "玩家";
-    elements.playerSession.hidden = false;
-    elements.authScreen.hidden = true;
-    elements.appShell.hidden = false;
     setConnection(true);
     renderProfiles(state.profiles, state.selected_profile_id);
+    openInitialProfileNameDialog();
     renderCaptureHistory(state.captures || []);
     renderAnalysis();
     renderScreenshotCandidates();
@@ -4486,8 +4434,16 @@ elements.profile.addEventListener("change", async () => {
   }
 });
 
-document.querySelector("#newProfileButton").addEventListener("click", () => elements.profileDialog.showModal());
-document.querySelector("#cancelProfileButton").addEventListener("click", () => elements.profileDialog.close());
+document.querySelector("#newProfileButton").addEventListener("click", () => {
+  resetProfileDialog();
+  elements.profileForm.reset();
+  elements.profileDialog.showModal();
+});
+elements.cancelProfileButton.addEventListener("click", () => elements.profileDialog.close());
+elements.profileDialog.addEventListener("cancel", (event) => {
+  if (profileNameSetupOpen) event.preventDefault();
+});
+elements.profileDialog.addEventListener("close", resetProfileDialog);
 elements.profileForm.elements.game_mode.addEventListener("change", () => {
   elements.seasonField.hidden = elements.profileForm.elements.game_mode.value !== "pvp-season";
 });
@@ -4495,6 +4451,13 @@ elements.profileForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = new FormData(elements.profileForm);
   try {
+    if (state?.profile_name_required) {
+      await post("/api/profiles/name", { name: form.get("name") });
+      await refreshState();
+      elements.profileDialog.close();
+      toast("本地档案已命名");
+      return;
+    }
     await post("/api/profiles", {
       name: form.get("name"),
       game_mode: form.get("game_mode"),
@@ -4969,68 +4932,20 @@ elements.themeToggle.addEventListener("click", () => {
 elements.languageToggle.addEventListener("click", () => {
   applyLanguage(currentLanguage === "zh" ? "en" : "zh", true);
 });
-elements.authLanguageToggle.addEventListener("click", () => {
-  applyLanguage(currentLanguage === "zh" ? "en" : "zh", true);
-});
-
-elements.authModeButton.addEventListener("click", () => {
-  authMode = authMode === "login" ? "register" : "login";
-  renderAuthMode();
-});
-elements.authForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const registering = authMode === "register";
-  const form = new FormData(elements.authForm);
-  elements.authSubmitButton.disabled = true;
-  elements.authError.hidden = true;
-  try {
-    await post(registering ? "/api/auth/register" : "/api/auth/login", {
-      username: form.get("username"),
-      password: form.get("password"),
-    });
-    elements.authPassword.value = "";
-    needsFirstPlayerSetup = false;
-    authMode = "login";
-    renderAuthMode();
-    await refreshState();
-    await refreshLogs();
-    if (state) toast(registering ? "玩家账号已创建" : "登录成功");
-  } catch (error) {
-    elements.authError.textContent = error.message;
-    elements.authError.hidden = false;
-  } finally {
-    elements.authSubmitButton.disabled = false;
-  }
-});
-elements.logoutButton.addEventListener("click", async () => {
-  try {
-    await post("/api/auth/logout");
-    authMode = "login";
-    needsFirstPlayerSetup = false;
-    renderAuthMode();
-    showAuthScreen();
-    elements.authUsername.value = "";
-    elements.authPassword.value = "";
-  } catch (error) {
-    toast(error.message);
-  }
-});
-
 applyLanguage(safeStorageGet("eft-task-assistant-language") || "zh");
 initializeTheme();
 setMapZoom(1);
 syncMapFullscreenButton();
-renderAuthMode();
 const hideoutPlannerResizeObserver = new ResizeObserver(syncHideoutMaterialsLayout);
 hideoutPlannerResizeObserver.observe(elements.hideoutPlannerPanel);
 window.addEventListener("resize", syncHideoutMaterialsLayout, { passive: true });
 syncHideoutMaterialsLayout();
-initializeSession();
+initializeLocalApp();
 setInterval(() => {
-  if (!elements.appShell.hidden) refreshState();
+  refreshState();
 }, 1500);
 setInterval(() => {
-  if (!elements.appShell.hidden) refreshLogs();
+  refreshLogs();
 }, 7000);
 setInterval(scanScreenshotFolder, 2500);
 document.addEventListener("visibilitychange", () => {

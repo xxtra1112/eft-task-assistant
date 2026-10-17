@@ -267,7 +267,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--focus); box-shad
 .task-notification-task-order { color: var(--subtle); font-size: 9px; font-variant-numeric: tabular-nums; }
 .task-notification-task strong { overflow: hidden; color: var(--text); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .task-notification-task-status { color: var(--muted); font-size: 9px; white-space: nowrap; }
-.task-notification-task.is-added .task-notification-task-status { color: var(--success); }
+.task-notification-task.is-added .task-notification-task-status, .task-notification-task.is-already_tracked .task-notification-task-status { color: var(--success); }
 .task-notification-task.is-processing .task-notification-task-status, .task-notification-task.is-importing .task-notification-task-status { color: var(--warning); }
 .task-notification-task.is-failed .task-notification-task-status, .task-notification-error { color: var(--danger); }
 .task-notification-evidence, .task-notification-error { grid-column: 2 / -1; font-size: 9px; overflow-wrap: anywhere; }
@@ -426,6 +426,7 @@ dialog::backdrop { background: rgb(0 0 0 / 52%); backdrop-filter: blur(4px); }
 .key-ownership-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .key-ownership-heading h2 { margin: 4px 0 0; font-size: 18px; }
 .key-ownership-item { display: flex; align-items: center; gap: 14px; border: 1px solid var(--border); border-radius: 12px; padding: 12px; background: var(--panel-raised); }
+.key-ownership-item p.is-confirmation { font-weight: 600; }
 .key-ownership-image-wrap { display: grid; width: 60px; height: 60px; flex: none; place-items: center; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: var(--panel-soft); font-size: 26px; }
 .key-ownership-image { width: 100%; height: 100%; padding: 5px; object-fit: contain; }
 .key-ownership-item strong { font-size: 13px; }

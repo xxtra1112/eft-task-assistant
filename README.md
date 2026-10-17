@@ -152,14 +152,14 @@ python main.py
 
 ~~~powershell
 python -m pip install -r requirements-build.txt
-& "$PWD/build_windows.ps1" -Version 1.1.0
+& "$PWD/build_windows.ps1" -Version 1.1.1
 ~~~
 
 生成的文件位于 `dist` 目录。构建需要 Windows x64、Python 3.11 和网络连接，以便安装并打包 OCR 运行依赖。源代码欢迎通过 GitHub Issues 反馈问题或提交改进建议。
 
 ## 持续集成与发布
 
-GitHub Actions 会在推送到 `main`、提交 Pull Request 或手动运行时检查 Python 依赖与模块导入、Python 编译和前端 JavaScript 语法。推送格式为 `v主版本.次版本.修订版本` 的新标签（例如 `v1.1.1`）后，工作流会在 Windows 上构建可执行文件、启动并检查网页返回 HTTP 200，然后自动创建 GitHub Release，附上程序、许可证、第三方声明和 SHA-256 校验值。
+GitHub Actions 会在推送到 `main`、提交 Pull Request 或手动运行时检查 Python 依赖与模块导入、Python 编译和前端 JavaScript 语法。推送格式为 `v主版本.次版本.修订版本` 的新标签后，工作流会读取 `docs/releases/` 中同名的双语发布说明，在 Windows 上构建并启动可执行文件、检查网页返回 HTTP 200，然后自动创建 GitHub Release，附上程序、许可证、第三方声明和 SHA-256 校验值。
 
 ## 数据来源与许可
 

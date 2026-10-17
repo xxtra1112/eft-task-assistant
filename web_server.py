@@ -60,6 +60,7 @@ SCREENSHOT_TASK_OCR_CONFIDENCE = 0.65
 SCREENSHOT_TASK_MIN_FUZZY_LENGTH = 5
 SCREENSHOT_TASK_AMBIGUITY_MARGIN = 0.08
 CAPTURE_HISTORY_LIMIT = 10
+CATALOG_MATCH_PENDING_WARNING = "任务资料目录尚未就绪；截图已保存，目录同步后会自动补匹配。"
 CAPTURE_PENDING_LIMIT = 8
 CAPTURE_ACTIVE_STATES = {"waiting_for_device", "capturing", "queued", "processing"}
 MAX_CAPTURE_BYTES = 16 * 1024 * 1024
@@ -379,10 +380,12 @@ def _match_screenshot_task_candidates(
             continue
 
         source_task_id = str(best_task.get("source_task_id", ""))
-        if not source_task_id or source_task_id in tracked_ids:
+        if not source_task_id:
             continue
-        if normalize_text(str(best_task.get("title", ""))) in tracked_titles:
-            continue
+        already_tracked = (
+            source_task_id in tracked_ids
+            or normalize_text(str(best_task.get("title", ""))) in tracked_titles
+        )
 
         image_y = text_bounds["y"]
         image_x = text_bounds["x"]
@@ -399,6 +402,7 @@ def _match_screenshot_task_candidates(
             "ocr_confidence": round(ocr_confidence, 3),
             "match_score": round(best_score, 3),
             "match_type": "exact" if best_score == 1.0 else "fuzzy",
+            "already_tracked": already_tracked,
             "match_region": "task_list",
             "bounds": text_bounds,
             "image_y": image_y,
@@ -453,8 +457,18 @@ class AssistantState:
         self.catalog_busy = False
         self.catalog_status = "尚无任务目录；可手动同步 EFTarkov 公开资料。"
         self.catalog_error = ""
+        self.catalog_pending_captures: set[tuple[str, int]] = set()
         self._closed = False
         self._restore_capture_records()
+        selected_profile = next(
+            (profile for profile in self.store.list_profiles() if profile.id == self.selected_profile_id),
+            None,
+        )
+        if selected_profile and selected_profile.game_mode != "pvp-season":
+            if self.store.latest_catalog_snapshot(selected_profile.game_mode):
+                self._retry_catalog_pending_captures(selected_profile.game_mode)
+            else:
+                self.request_catalog_refresh()
         log_event(
             "application_started",
             database_path=str(self.store.path),
@@ -528,7 +542,15 @@ class AssistantState:
                 "task_candidates": candidates,
             }
             self.capture_records[record["id"]] = record
-            self.store.save_pending_task_candidates(candidates)
+            if (
+                record["state"] == "done"
+                and analysis
+                and analysis.diagnostics.get("catalog_match_pending")
+            ):
+                self.catalog_pending_captures.add((record["id"], int(record["profile_id"])))
+            self.store.save_pending_task_candidates(
+                [candidate for candidate in candidates if not candidate.get("already_tracked")]
+            )
             if state != saved["state"] or candidates != saved["task_candidates"]:
                 self.store.save_capture_record({**record, "analysis": _analysis_json(record["analysis"])})
         self.latest_capture_id = next(reversed(self.capture_records), None)
@@ -862,6 +884,17 @@ class AssistantState:
                 content_sha256=bundle.content_sha256,
                 metadata=bundle.metadata,
             )
+            try:
+                self._retry_catalog_pending_captures(game_mode)
+            except Exception as error:
+                log_event(
+                    "screenshot_candidate_catalog_retry_failed",
+                    level=logging.ERROR,
+                    profile_id=profile_id,
+                    game_mode=game_mode,
+                    error=repr(error),
+                    traceback=traceback.format_exc(),
+                )
         except Exception as error:
             with self.lock:
                 self.catalog_error = str(error)
@@ -910,6 +943,9 @@ class AssistantState:
             profile.game_mode, trader=analysis.trader, limit=200
         )
         if not catalog_tasks:
+            if not self.store.latest_catalog_snapshot(profile.game_mode):
+                with self.lock:
+                    self.catalog_pending_captures.add((capture_id, profile_id))
             log_event(
                 "screenshot_task_catalog_unavailable",
                 level=logging.WARNING,
@@ -928,7 +964,78 @@ class AssistantState:
         candidates = _match_screenshot_task_candidates(
             analysis, catalog_tasks, tracked_tasks, capture_id, profile_id
         )
-        return [candidate for candidate in candidates if candidate["source_task_id"] not in pending_ids]
+        return [
+            candidate
+            for candidate in candidates
+            if candidate.get("already_tracked")
+            or candidate["source_task_id"] not in pending_ids
+        ]
+
+    def _retry_catalog_pending_captures(self, game_mode: str) -> None:
+        with self.lock:
+            pending = sorted(self.catalog_pending_captures)
+        for capture_id, profile_id in pending:
+            profile = next((item for item in self.profiles() if item.id == profile_id), None)
+            if profile is None or profile.game_mode != game_mode:
+                continue
+            with self.lock:
+                capture = self.capture_records.get(capture_id)
+                if capture is None or capture.get("analysis") is None:
+                    self.catalog_pending_captures.discard((capture_id, profile_id))
+                    continue
+                analysis = capture["analysis"]
+            candidates = self.screenshot_task_candidates(analysis, profile_id, capture_id)
+            new_candidates = [candidate for candidate in candidates if not candidate.get("already_tracked")]
+            already_tracked = [candidate for candidate in candidates if candidate.get("already_tracked")]
+            for candidate in candidates:
+                candidate["objectives"] = []
+                candidate["key_requirements"] = []
+                candidate["map_points"] = []
+                candidate["details_error"] = ""
+                if candidate.get("already_tracked"):
+                    candidate["details_status"] = "skipped"
+                    candidate["notification_status"] = "already_tracked"
+                    candidate["notification_message"] = "已在任务清单中；本次确认识别，不重复添加。"
+                else:
+                    candidate["details_status"] = "loading"
+                    candidate["notification_status"] = "processing"
+                    candidate["notification_message"] = "正在查询任务详情…"
+            diagnostics = dict(analysis.diagnostics)
+            diagnostics.pop("catalog_match_pending", None)
+            base_warning = analysis.warning.replace(CATALOG_MATCH_PENDING_WARNING, "").strip()
+            notices = []
+            if new_candidates:
+                notices.append(f"识别到 {len(new_candidates)} 个新任务，正在自动加入清单。")
+            if already_tracked:
+                notices.append(f"另外识别到 {len(already_tracked)} 个已在清单的任务，不会重复添加。")
+            if not candidates:
+                notices.append("任务资料目录已同步，但这张截图中没有匹配到目录任务。")
+            analysis = replace(
+                analysis,
+                diagnostics=diagnostics,
+                warning=" ".join(part for part in (base_warning, *notices) if part),
+            )
+            with self.lock:
+                capture = self.capture_records.get(capture_id)
+                if capture is None:
+                    self.catalog_pending_captures.discard((capture_id, profile_id))
+                    continue
+                capture["analysis"] = analysis
+                capture["task_candidates"] = candidates
+                self.store.save_pending_task_candidates(new_candidates)
+                self._persist_capture_locked(capture)
+                self.catalog_pending_captures.discard((capture_id, profile_id))
+            log_event(
+                "screenshot_candidates_retried_after_catalog_sync",
+                capture_id=capture_id,
+                profile_id=profile_id,
+                candidate_count=len(candidates),
+                source_task_ids=[candidate["source_task_id"] for candidate in candidates],
+            )
+            if new_candidates:
+                self.catalog_executor.submit(
+                    self._load_screenshot_candidate_details, capture_id, profile_id
+                )
 
     def _update_screenshot_candidate(
         self, capture_id: str, profile_id: int, source_task_id: str, updates: dict[str, Any]
@@ -1309,20 +1416,44 @@ class AssistantState:
         try:
             analysis = self.analyzer.analyze(image, capture_id=capture_id)
             task_candidates: list[dict[str, Any]] = []
+            new_task_candidates: list[dict[str, Any]] = []
             if analysis.kind == ScreenKind.TRADER_TASKS and analysis.task_page_confident and analysis.trader:
                 task_candidates = self.screenshot_task_candidates(analysis, profile_id, capture_id)
+                if (capture_id, profile_id) in getattr(self, "catalog_pending_captures", set()):
+                    diagnostics = {**analysis.diagnostics, "catalog_match_pending": True}
+                    warning = analysis.warning
+                    if CATALOG_MATCH_PENDING_WARNING not in warning:
+                        warning = f"{warning} {CATALOG_MATCH_PENDING_WARNING}".strip()
+                    analysis = replace(analysis, diagnostics=diagnostics, warning=warning)
+                new_task_candidates = [
+                    candidate for candidate in task_candidates
+                    if not candidate.get("already_tracked")
+                ]
+                already_tracked_candidates = [
+                    candidate for candidate in task_candidates
+                    if candidate.get("already_tracked")
+                ]
                 for candidate in task_candidates:
                     candidate["objectives"] = []
                     candidate["key_requirements"] = []
                     candidate["map_points"] = []
-                    candidate["details_status"] = "loading"
                     candidate["details_error"] = ""
-                    candidate["notification_status"] = "processing"
-                    candidate["notification_message"] = "正在查询任务详情…"
+                    if candidate.get("already_tracked"):
+                        candidate["details_status"] = "skipped"
+                        candidate["notification_status"] = "already_tracked"
+                        candidate["notification_message"] = "已在任务清单中；本次确认识别，不重复添加。"
+                    else:
+                        candidate["details_status"] = "loading"
+                        candidate["notification_status"] = "processing"
+                        candidate["notification_message"] = "正在查询任务详情…"
                 notices: list[str] = []
-                if task_candidates:
+                if new_task_candidates:
                     notices.append(
-                        f"识别到 {len(task_candidates)} 个新任务，逐项处理结果见下方截图通知。"
+                        f"识别到 {len(new_task_candidates)} 个新任务，逐项处理结果见下方截图通知。"
+                    )
+                if already_tracked_candidates:
+                    notices.append(
+                        f"另外识别到 {len(already_tracked_candidates)} 个已在清单的任务，不会重复添加。"
                     )
                 if notices:
                     analysis = replace(analysis, warning=f"{analysis.warning} {' '.join(notices)}".strip())
@@ -1333,15 +1464,19 @@ class AssistantState:
                 record["analysis"] = analysis
                 record["task_candidates"] = task_candidates
                 record["state"] = "done"
-                self.store.save_pending_task_candidates(task_candidates)
+                self.store.save_pending_task_candidates(new_task_candidates)
                 self._persist_capture_locked(record)
                 self._prune_capture_records_locked()
-            if task_candidates:
+            new_task_candidates = [
+                candidate for candidate in task_candidates
+                if not candidate.get("already_tracked")
+            ]
+            if new_task_candidates:
                 log_event(
                     "screenshot_candidate_details_started",
                     capture_id=capture_id,
                     profile_id=profile_id,
-                    source_task_ids=[candidate["source_task_id"] for candidate in task_candidates],
+                    source_task_ids=[candidate["source_task_id"] for candidate in new_task_candidates],
                 )
                 try:
                     self.catalog_executor.submit(
@@ -1362,7 +1497,7 @@ class AssistantState:
                                 for candidate in record["task_candidates"]
                             ]
                             self._persist_capture_locked(record)
-                    for candidate in task_candidates:
+                    for candidate in new_task_candidates:
                         self.store.delete_pending_task_candidate(
                             profile_id, candidate["source_task_id"]
                         )
@@ -1388,6 +1523,7 @@ class AssistantState:
                         "image_order": candidate.get("image_order"),
                         "match_score": candidate["match_score"],
                         "ocr_confidence": candidate["ocr_confidence"],
+                        "already_tracked": bool(candidate.get("already_tracked")),
                     }
                     for candidate in task_candidates
                 ],

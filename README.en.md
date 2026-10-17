@@ -152,14 +152,14 @@ To build a single-file Windows x64 executable, activate a Conda environment with
 
 ~~~powershell
 python -m pip install -r requirements-build.txt
-& "$PWD/build_windows.ps1" -Version 1.1.0
+& "$PWD/build_windows.ps1" -Version 1.1.1
 ~~~
 
 The executable is written to the `dist` directory. Building requires Windows x64, Python 3.11, and internet access to install and bundle the OCR runtime dependencies. Bug reports and improvement suggestions are welcome on GitHub Issues.
 
 ## Continuous integration and releases
 
-GitHub Actions checks Python dependencies and imports, Python compilation, and frontend JavaScript syntax on pushes to `main`, pull requests, and manual runs. Pushing a new version tag in `vMAJOR.MINOR.PATCH` format (for example, `v1.1.1`) runs a Windows build, starts the executable and checks for an HTTP 200 response, then creates a GitHub Release with the executable, license, third-party notices, and SHA-256 checksum.
+GitHub Actions checks Python dependencies and imports, Python compilation, and frontend JavaScript syntax on pushes to `main`, pull requests, and manual runs. Pushing a new `vMAJOR.MINOR.PATCH` tag reads its matching bilingual release notes from `docs/releases/`, builds and starts the Windows executable, checks for an HTTP 200 response, then creates a GitHub Release with the executable, license, third-party notices, and SHA-256 checksum.
 
 ## Data sources and license
 

@@ -608,6 +608,8 @@ let taskKeyIdsByTask = new Map();
 let keySummaryEntries = [];
 let keySummaryRenderSignature = "";
 let activeKeyOwnershipId = "";
+let keyOwnershipPromptTimer = null;
+let keyOwnershipAnswerTimer = null;
 const deferredKeyOwnershipIds = new Set();
 let showHiddenTasks = false;
 const MAP_ZOOM_MIN = 0.5;
@@ -1124,6 +1126,10 @@ async function undoOperation(operationId) {
 function activateProfileUiPreferences(playerId, profileId, isAdmin = false) {
   const normalizedScopeId = `${String(playerId || "local")}:${String(profileId)}`;
   if (uiPreferenceScopeId === normalizedScopeId) return false;
+  clearTimeout(keyOwnershipPromptTimer);
+  keyOwnershipPromptTimer = null;
+  clearTimeout(keyOwnershipAnswerTimer);
+  keyOwnershipAnswerTimer = null;
   uiPreferenceScopeId = normalizedScopeId;
   deferredKeyOwnershipIds.clear();
   activeKeyOwnershipId = "";
@@ -1980,13 +1986,16 @@ function renderKeySummary(tasks) {
 }
 
 function showNextKeyOwnershipPrompt() {
-  if (!uiPreferences || elements.keyOwnershipDialog.open || !keySummaryEntries.length) return;
+  if (keyOwnershipPromptTimer || !uiPreferences || elements.keyOwnershipDialog.open || !keySummaryEntries.length) return;
   const key = uiPreferences.keyOwnershipPendingIds
     .filter((keyId) => !deferredKeyOwnershipIds.has(keyId))
     .map((keyId) => keySummaryEntries.find((entry) => entry.id === keyId))
     .find(Boolean);
   if (!key) return;
   activeKeyOwnershipId = key.id;
+  elements.keyOwnershipYesButton.disabled = false;
+  elements.keyOwnershipNoButton.disabled = false;
+  elements.keyOwnershipLaterButton.disabled = false;
   elements.keyOwnershipName.textContent = key.name;
   const taskNames = [...key.tasks.values()];
   const displayedTaskNames = taskNames.slice(0, 3).join("、");
@@ -1995,6 +2004,7 @@ function showNextKeyOwnershipPrompt() {
     ? `${displayedTaskNames} 等 ${taskNames.length} 个任务`
     : displayedTaskNames || "当前任务";
   elements.keyOwnershipQuestion.textContent = `「${taskSummary}」需要这把钥匙。你现在有吗？`;
+  elements.keyOwnershipQuestion.classList.remove("is-confirmation");
   const imageUrl = key.imageUrl || "";
   setItemImageSources(
     elements.keyOwnershipImage,
@@ -2005,14 +2015,20 @@ function showNextKeyOwnershipPrompt() {
 }
 
 function answerKeyOwnership(hasKey) {
-  if (!uiPreferences || !activeKeyOwnershipId) return;
+  if (keyOwnershipAnswerTimer) return;
+  if (!uiPreferences || !activeKeyOwnershipId) {
+    elements.keyOwnershipQuestion.textContent = currentLanguage === "en"
+      ? "The key status could not be recorded. Please try again or choose Later."
+      : "钥匙状态暂时无法记录，请重试或选择“稍后”。";
+    elements.keyOwnershipQuestion.classList.add("is-confirmation");
+    return;
+  }
   const before = captureUiUndoSnapshot();
   const keyId = activeKeyOwnershipId;
   uiPreferences.keyOwnershipAnswers[keyId] = hasKey;
   if (hasKey) hiddenKeyIds.delete(keyId);
   uiPreferences.keyOwnershipPendingIds = uiPreferences.keyOwnershipPendingIds
     .filter((pendingId) => pendingId !== keyId);
-  activeKeyOwnershipId = "";
   const row = [...elements.keySummaryRows.querySelectorAll(".key-summary-row")]
     .find((entry) => entry.dataset.keyId === keyId);
   const ownership = row?.querySelector(".key-summary-ownership");
@@ -2024,7 +2040,22 @@ function answerKeyOwnership(hasKey) {
   const keyName = keySummaryEntries.find((entry) => entry.id === keyId)?.name || "钥匙";
   recordUiOperation("钥匙状态：" + keyName + " · " + (hasKey ? "标记为已有" : "标记为待准备"), before);
   saveUiPreferences();
-  elements.keyOwnershipDialog.close();
+  const confirmation = currentLanguage === "en"
+    ? `${hasKey ? "Marked as owned" : "Marked as needed"}: ${keyName}`
+    : hasKey ? `已标记为已有：${keyName}` : `已标记为待准备：${keyName}`;
+  toast(confirmation);
+  activeKeyOwnershipId = "";
+  elements.keyOwnershipQuestion.textContent = currentLanguage === "en"
+    ? `${confirmation}. Continuing to the next key shortly.`
+    : `${confirmation}。稍后继续确认下一把钥匙。`;
+  elements.keyOwnershipQuestion.classList.add("is-confirmation");
+  elements.keyOwnershipYesButton.disabled = true;
+  elements.keyOwnershipNoButton.disabled = true;
+  elements.keyOwnershipLaterButton.disabled = true;
+  keyOwnershipAnswerTimer = setTimeout(() => {
+    keyOwnershipAnswerTimer = null;
+    if (elements.keyOwnershipDialog.open) elements.keyOwnershipDialog.close();
+  }, 900);
   if (hasKey && state) {
     renderTasks(state.tasks);
     renderMapTargets(mapView?.markers || [], mapView?.tasks || []);
@@ -3198,6 +3229,7 @@ function renderScreenshotCandidates() {
         processing: "查询中",
         importing: "加入中",
         added: "已加入",
+        already_tracked: "已在清单",
         failed: "失败",
       };
       status.textContent = statusMessages[notification.status] || notification.message || "处理中";
@@ -4843,11 +4875,20 @@ elements.keyOwnershipYesButton.addEventListener("click", () => answerKeyOwnershi
 elements.keyOwnershipNoButton.addEventListener("click", () => answerKeyOwnership(false));
 elements.keyOwnershipLaterButton.addEventListener("click", deferKeyOwnershipQuestion);
 elements.keyOwnershipDialog.addEventListener("close", () => {
+  clearTimeout(keyOwnershipAnswerTimer);
+  keyOwnershipAnswerTimer = null;
+  elements.keyOwnershipYesButton.disabled = false;
+  elements.keyOwnershipNoButton.disabled = false;
+  elements.keyOwnershipLaterButton.disabled = false;
   if (activeKeyOwnershipId) {
     deferredKeyOwnershipIds.add(activeKeyOwnershipId);
     activeKeyOwnershipId = "";
   }
-  showNextKeyOwnershipPrompt();
+  clearTimeout(keyOwnershipPromptTimer);
+  keyOwnershipPromptTimer = setTimeout(() => {
+    keyOwnershipPromptTimer = null;
+    showNextKeyOwnershipPrompt();
+  }, 700);
 });
 document.querySelector(".quick-nav-menu").addEventListener("click", (event) => {
   if (event.target.closest("a[href^='#']")) document.querySelector(".quick-nav").open = false;

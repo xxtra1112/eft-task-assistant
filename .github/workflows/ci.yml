@@ -191,6 +191,9 @@ jobs:
           $exe = "dist/EFTTaskAssistant-v$version-Windows-x64.exe"
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $exe).Hash.ToLowerInvariant()
           "sha256=$hash" >> $env:GITHUB_OUTPUT
+          "$hash  $(Split-Path -Leaf $exe)" | Set-Content -LiteralPath "dist/SHA256SUMS.txt" -Encoding ascii
+          $notes = Join-Path $PWD "docs/releases/$($env:GITHUB_REF_NAME).md"
+          Add-Content -LiteralPath $notes -Value @('', '---', '', "Windows x64 executable SHA-256 / 可执行文件 SHA-256：$hash")
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -200,22 +203,8 @@ jobs:
           make_latest: true
           fail_on_unmatched_files: true
           body_path: docs/releases/${{ github.ref_name }}.md
-          append_body: true
-          body: |
-            ---
-
-            Windows x64 executable built by GitHub Actions. SHA-256: `${{ steps.checksum.outputs.sha256 }}`
-
-            附带 MIT 许可证和可执行文件第三方组件声明。
-
-            ## English
-
-            Automatically built Windows x64 release of EFT Task Assistant. Run the executable directly; Python is not required. Desktop data stays on the local computer and no account login is needed. A phone can read the map over the LAN after QR pairing. See the repository README for setup and usage.
-
-            SHA-256: ${{ steps.checksum.outputs.sha256 }}
-
-            Includes the MIT license and notices for third-party components bundled in the executable.
           files: |
             dist/EFTTaskAssistant-${{ github.ref_name }}-Windows-x64.exe
+            dist/SHA256SUMS.txt
             dist/LICENSE.txt
             dist/THIRD_PARTY_NOTICES.md

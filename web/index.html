@@ -114,7 +114,7 @@
           </form>
         </details>
         <details id="catalogPanel" class="catalog-details">
-          <summary>从 EFTarkov 任务资料库导入</summary>
+          <summary>从 Tarkov.dev JSON API 导入任务</summary>
           <div class="catalog-controls">
             <button id="catalogRefreshButton" class="button button-secondary" type="button">同步公开目录</button>
             <input id="catalogSearch" type="search" placeholder="搜索任务名或商人" aria-label="搜索任务资料库">
@@ -134,10 +134,10 @@
                 <button id="catalogImportButton" class="button button-primary" type="button" disabled>加入清单</button>
               </div>
               <ul id="catalogObjectives" class="catalog-objectives"></ul>
-              <a id="catalogSourceLink" target="_blank" rel="noopener noreferrer">打开 EFTarkov 来源页</a>
+              <a id="catalogSourceLink" target="_blank" rel="noopener noreferrer">打开 Tarkov.dev API 来源</a>
             </article>
           </div>
-          <p class="catalog-warning">来源页面标注版本不等于游戏补丁版本；覆盖情况未经官方逐项核对。资料只作为人工确认的候选，不会自动标记完成或修改进度。</p>
+          <p class="catalog-warning">API 未标注具体游戏补丁版本，任务覆盖范围未经官方逐项核对。资料只作为人工确认的候选，不会自动标记完成或修改进度。</p>
         </details>
       </article>
     </section>
@@ -164,7 +164,8 @@
           <h2>地图任务点位</h2>
         </div>
         <div class="map-heading-actions">
-          <a id="mapSourceLink" class="map-source-link" target="_blank" rel="noopener noreferrer">EFTarkov 地图来源</a>
+          <a id="mapSourceLink" class="map-source-link" target="_blank" rel="noopener noreferrer">Tarkov.dev 地图来源</a>
+          <span id="mapArtworkAttribution" class="map-source-attribution" hidden></span>
           <button id="mobileCompanionButton" class="button button-secondary button-small" type="button">手机地图二维码</button>
         </div>
       </div>
@@ -177,6 +178,7 @@
             <label class="map-annotation-toggle"><input type="checkbox" data-map-annotation-filter="location" checked><span class="annotation-swatch is-location" aria-hidden="true"></span>地图地点</label>
             <label class="map-annotation-toggle"><input type="checkbox" data-map-annotation-filter="pmc-exit"><span class="annotation-swatch is-pmc" aria-hidden="true"></span>PMC撤离点</label>
             <label class="map-annotation-toggle"><input type="checkbox" data-map-annotation-filter="scav-exit"><span class="annotation-swatch is-scav" aria-hidden="true"></span>SCAV撤离点</label>
+            <label class="map-annotation-toggle"><input type="checkbox" data-map-annotation-filter="unknown-exit"><span class="annotation-swatch is-unknown-exit" aria-hidden="true"></span>未分类撤离点</label>
             <label class="map-annotation-toggle"><input type="checkbox" data-map-annotation-filter="transfer"><span class="annotation-swatch is-transfer" aria-hidden="true"></span>转移点</label>
           </div>
         </div>
@@ -215,7 +217,7 @@
           <div id="mapTargetList" class="map-target-list"></div>
         </aside>
       </div>
-      <p class="map-data-note">底图、地点与撤离/转移点数据来自 EFTarkov 公开页面；可用上方开关筛选地图地点、PMC 撤离点、SCAV 撤离点和转移点。任务点位及标注保留楼层信息，任务隐藏会同步地图任务点位；右键任务标点可切换到访勾选。</p>
+      <p class="map-data-note">地图底图、任务区域、地点、撤离点与转移点来自 Tarkov.dev 公开资料；可用上方开关筛选地图地点、PMC/SCAV/未分类撤离点和转移点。任务点位及标注保留楼层信息，楼层切换只更换底图；右键任务标点可切换到访勾选。任务区域目前不附带独立说明图片。</p>
     </section>
 
     <section class="hideout-upgrade-grid" aria-label="藏身处升级计划与材料">
@@ -328,7 +330,7 @@
       <div id="mapPointImageGallery" class="map-point-image-gallery"></div>
       <p id="mapPointImageUnavailable" class="muted" hidden>该点位没有可用的独立说明图片。</p>
     </div>
-    <a id="mapPointImageSource" class="map-point-image-source" target="_blank" rel="noopener noreferrer" hidden>打开 EFTarkov 点位来源</a>
+    <a id="mapPointImageSource" class="map-point-image-source" target="_blank" rel="noopener noreferrer" hidden>打开 Tarkov.dev 任务来源</a>
   </dialog>
 
   <dialog id="keyOwnershipDialog" class="key-ownership-dialog" aria-labelledby="keyOwnershipTitle">

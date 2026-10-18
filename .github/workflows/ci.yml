@@ -37,8 +37,8 @@ jobs:
 
       - name: Compile and import Python modules
         run: |
-          python -m compileall -q main.py catalog.py diagnostics.py hideout_data.py players.py recognition.py storage.py task_requirements.py web_server.py
-          python -c "import catalog, diagnostics, hideout_data, main, players, recognition, storage, task_requirements, web_server; print('Python imports passed')"
+          python -m compileall -q main.py catalog.py diagnostics.py hideout_data.py players.py recognition.py storage.py task_requirements.py tarkov_dev_catalog.py tarkov_dev_maps.py point_images.py web_server.py
+          python -c "import catalog, diagnostics, hideout_data, main, players, recognition, storage, task_requirements, tarkov_dev_catalog, tarkov_dev_maps, point_images, web_server; print('Python imports passed')"
           python -m pytest -q
 
       - name: Check Windows console encoding
@@ -104,13 +104,13 @@ jobs:
           $stderr = Join-Path $env:RUNNER_TEMP 'eft-task-assistant.stderr.log'
           New-Item -ItemType Directory -Force -Path $dataRoot | Out-Null
           $env:LOCALAPPDATA = $dataRoot
-          $process = Start-Process -FilePath $exe -WorkingDirectory $PWD.Path -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          $process = Start-Process -FilePath $exe -ArgumentList @("--port", "18765", "--mobile-port", "18766", "--no-browser") -WorkingDirectory $PWD.Path -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
           try {
             $deadline = (Get-Date).AddSeconds(60)
             $healthy = $false
             while ((Get-Date) -lt $deadline) {
               try {
-                $response = Invoke-WebRequest -Uri 'http://127.0.0.1:8765/' -TimeoutSec 3 -UseBasicParsing
+                $response = Invoke-WebRequest -Uri 'http://127.0.0.1:18765/' -TimeoutSec 3 -UseBasicParsing
                 if ($response.StatusCode -eq 200) {
                   $healthy = $true
                   break
@@ -123,12 +123,12 @@ jobs:
             if (-not $healthy) {
               if (Test-Path $stdout) { Get-Content $stdout }
               if (Test-Path $stderr) { Get-Content $stderr }
-              throw 'Packaged app did not return HTTP 200 on localhost:8765.'
+              throw 'Packaged app did not return HTTP 200 on localhost:18765.'
             }
             if ($response.Content -match 'id="authForm"') {
               throw 'Packaged desktop page unexpectedly contains the retired account-login form.'
             }
-            $localState = Invoke-RestMethod -Uri 'http://127.0.0.1:8765/api/state' -TimeoutSec 5
+            $localState = Invoke-RestMethod -Uri 'http://127.0.0.1:18765/api/state' -TimeoutSec 5
             if (-not $localState.profiles -or -not $localState.selected_profile_id) {
               throw 'Packaged app did not enter its local profile automatically.'
             }
@@ -136,15 +136,15 @@ jobs:
               throw 'Packaged app did not request a name for its first local profile.'
             }
             $profileBody = @{ name = 'CI Local Profile' } | ConvertTo-Json -Compress
-            $namedProfile = Invoke-RestMethod -Uri 'http://127.0.0.1:8765/api/profiles/name' -Method Post -ContentType 'application/json' -Body $profileBody -TimeoutSec 5
+            $namedProfile = Invoke-RestMethod -Uri 'http://127.0.0.1:18765/api/profiles/name' -Method Post -ContentType 'application/json' -Body $profileBody -TimeoutSec 5
             if ($namedProfile.profile.name -ne 'CI Local Profile') {
               throw 'Packaged app did not save the local profile name.'
             }
-            $localState = Invoke-RestMethod -Uri 'http://127.0.0.1:8765/api/state' -TimeoutSec 5
+            $localState = Invoke-RestMethod -Uri 'http://127.0.0.1:18765/api/state' -TimeoutSec 5
             if ($localState.profile_name_required) {
               throw 'Packaged app kept the first-run profile naming prompt after saving.'
             }
-            $mobileInfo = Invoke-RestMethod -Uri 'http://127.0.0.1:8765/api/mobile/info' -TimeoutSec 5
+            $mobileInfo = Invoke-RestMethod -Uri 'http://127.0.0.1:18765/api/mobile/info' -TimeoutSec 5
             $mobilePort = [int]$mobileInfo.port
             if ($mobilePort -lt 8766) {
               throw 'Packaged app did not start its separate phone service.'

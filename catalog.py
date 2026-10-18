@@ -664,6 +664,16 @@ def _fetch_eftarkov_item_detail(item_id: str, game_mode: str) -> dict[str, Any]:
         return _fetch_eftarkov_item_detail_cached(item_id, game_mode)
 
 
+def fetch_eftarkov_task_map_points(source_task_id: str, game_mode: str = "pve") -> list[dict[str, Any]]:
+    if not TASK_ID_PATTERN.fullmatch(source_task_id):
+        raise CatalogError("任务 ID 格式无效。")
+    url = urljoin(EFTARKOV_ROOT, f"/task/{source_task_id.lower()}")
+    body, _ = _request(url, game_mode)
+    parser = _TaskDetailParser()
+    parser.feed(body.decode("utf-8", "replace"))
+    return fetch_eftarkov_map_marker_points(parser.map_marker_refs, game_mode)
+
+
 def fetch_eftarkov_task_detail(source_task_id: str, game_mode: str = "pve") -> dict[str, Any]:
     if not TASK_ID_PATTERN.fullmatch(source_task_id):
         raise CatalogError("任务 ID 格式无效。")

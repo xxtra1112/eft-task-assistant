@@ -692,6 +692,22 @@ function safeMobileExternalUrl(value) {
   }
 }
 
+function safeMobilePointImageUrl(value) {
+  try {
+    const url = new URL(value, "https://assets.tarkov.dev");
+    const approvedAsset = url.hostname === "assets.tarkov.dev"
+      && /^\/(?:[A-Za-z0-9._/-]+)\.(?:webp|png|jpe?g)$/i.test(url.pathname);
+    const approvedPointPhoto = url.hostname === "www.eftarkov.com"
+      && /^\/uploads\/infoImg\/[A-Za-z0-9_-]+\.(?:webp|png|jpe?g)$/i.test(url.pathname);
+    if (url.protocol !== "https:" || url.username || url.password || url.port
+      || url.search || url.hash || !(approvedAsset || approvedPointPhoto)
+      || url.pathname.split("/").includes("..")) return "";
+    return url.href;
+  } catch {
+    return "";
+  }
+}
+
 function applyMobileTheme(theme) {
   const normalizedTheme = theme === "light" ? "light" : "dark";
   document.documentElement.dataset.theme = normalizedTheme;
@@ -731,7 +747,7 @@ function openMobilePoint(marker) {
   const images = [...new Set([
     ...(Array.isArray(marker.source_image_urls) ? marker.source_image_urls : []),
     marker.source_image_url,
-  ].map(safeMobileExternalUrl).filter(Boolean))];
+  ].map(safeMobilePointImageUrl).filter(Boolean))];
   for (const [index, url] of images.entries()) {
     const link = document.createElement("a");
     link.href = url;
@@ -742,11 +758,16 @@ function openMobilePoint(marker) {
     image.alt = `${marker.title || "任务点位"} · ${index + 1}`;
     image.loading = "lazy";
     image.referrerPolicy = "no-referrer";
-    image.addEventListener("error", () => link.remove());
+    image.addEventListener("error", () => {
+      const failure = document.createElement("p");
+      failure.className = "map-point-image-load-error";
+      failure.textContent = "图片暂时无法加载";
+      link.replaceWith(failure);
+    }, { once: true });
     link.append(image);
     mobileElements.pointImages.append(link);
   }
-  const sourceUrl = safeMobileExternalUrl(marker.source_page_url || marker.source_url);
+  const sourceUrl = safeMobileExternalUrl(marker.source_image_page_url || marker.source_page_url || marker.source_url);
   mobileElements.pointSource.href = sourceUrl;
   mobileElements.pointSource.hidden = !sourceUrl;
   if (!mobileElements.pointDialog.open) mobileElements.pointDialog.showModal();

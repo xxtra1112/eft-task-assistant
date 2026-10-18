@@ -17,3 +17,8 @@ htmlcov/
 .ruff_cache/
 Thumbs.db
 .DS_Store
+
+# Task-local captures, runtime profiles and production exports
+.codex-tmp/
+docs/promo/production/
+docs/eft-task-assistant-promo-package.zip

@@ -36,7 +36,7 @@
 
 ## 界面预览
 
-以下截图来自独立的临时演示档案，不含玩家本机档案或游戏截图。任务与地图内容取自 [EFTarkov](https://www.eftarkov.com/) 公开资料，可能随来源更新而变化。
+以下截图来自独立的临时演示档案，不含玩家本机档案或游戏截图。任务目录、地图数据、撤离点与任务坐标来自 [Tarkov.dev JSON API](https://json.tarkov.dev/endpoints)；交互地图配置与 SVG 底图来自 Tarkov.dev 社区项目及其公开地图资源，可能随上游更新而变化。
 
 ![桌面端任务工作区：截图识别与任务清单并排显示](docs/images/desktop-overview-zh.png)
 
@@ -80,7 +80,7 @@ python main.py
 ## 第一次使用
 
 1. **建立档案：** 首次启动输入档案名称即可开始，默认使用 PvE。之后可新建其他档案并选择 PvE、常规 PvP 或赛季 PvP 模式。
-2. **载入任务资料：** 展开“任务清单”中的“从 EFTarkov 任务资料库导入”，选择“同步公开目录”。同步后即可搜索、预览并导入任务。在线资料可能更新或暂时无法访问。
+2. **载入任务资料：** 展开“任务清单”中的“Tarkov.dev JSON API”，选择“同步公开目录”。同步后即可搜索、预览并导入任务。在线资料可能更新或暂时无法访问。
 3. **选择截图目录：** 点击“选择截图文件夹”，选择这台电脑上游戏实际使用的 `Screenshots` 文件夹，并在浏览器提示时授权读取。
 4. **开始规划：** 检查任务清单、筛选地图、勾选钥匙，并在藏身处规划区选择设施和目标等级。
 
@@ -120,7 +120,7 @@ python main.py
 
 藏身处升级目标、已有材料数量、任务和钥匙的显隐状态、地图路线草图等界面资料保存在本机浏览器的本地存储中，并按档案区分。它们不会自动同步到其他浏览器或设备，也不包含在下方应用数据目录的备份中；清除浏览器站点数据可能会删除这些内容。
 
-助手不把截图发送给云端 AI；同步任务、地图或藏身处资料时，会访问 [EFTarkov](https://www.eftarkov.com/) 和 [Tarkov.dev](https://tarkov.dev/) 等公开来源。物品图片无法从主图床加载时，浏览器会尝试经 [wsrv.nl](https://wsrv.nl/) 加载同一张公开图片；不会发送档案资料、截图或任务清单。
+助手不把截图发送给云端 AI；同步任务、地图与藏身处资料时，会访问 [Tarkov.dev JSON API](https://json.tarkov.dev/endpoints) 和 Tarkov.dev 公开地图资源；点位现场图片及其校验资料会读取 EFTarkov 的公开地图页。物品图片无法从主图床加载时，浏览器会尝试经 [wsrv.nl](https://wsrv.nl/) 加载同一张公开图片；不会发送档案资料、截图或任务清单。
 
 ## 数据备份
 
@@ -152,7 +152,7 @@ python main.py
 
 ~~~powershell
 python -m pip install -r requirements-build.txt
-& "$PWD/build_windows.ps1" -Version 1.1.1
+& "$PWD/build_windows.ps1" -Version 1.2.0
 ~~~
 
 生成的文件位于 `dist` 目录。构建需要 Windows x64、Python 3.11 和网络连接，以便安装并打包 OCR 运行依赖。源代码欢迎通过 GitHub Issues 反馈问题或提交改进建议。
@@ -163,6 +163,10 @@ GitHub Actions 会在推送到 `main`、提交 Pull Request 或手动运行时�
 
 ## 数据来源与许可
 
-任务详情、钥匙需求和地图点位主要来自 [EFTarkov](https://www.eftarkov.com/)；藏身处升级材料来自 [Tarkov.dev](https://tarkov.dev/)。这些是社区公开资料，不是游戏官方接口，可能过时、缺漏或与不同游戏模式不完全一致。EFT 当前任务和数据版本会变化，请以游戏内实际内容为准；来源未提供可靠信息时，助手不会推测钥匙获取方法或点位。
+点位现场图片另从 EFTarkov（`www.eftarkov.com`）公开地图页补充。目前仅核对并接入 PvE 工厂“邮递员派特 - 1”和“往事速递”两处点位，共四张现场图片；不是全量恢复。补充记录严格绑定任务、地图、当前点位 ID、楼层和坐标，并复核旧标记与图片 URL。多点位、其他模式或无法可靠关联的地点保留无图；任务封面、物品图片和地图底图不会充作现场图。原有已缓存详情在读取时补充，无需重置任务或到访进度。来源不可访问或记录变化时保留原任务与地图，图片加载失败会显示提示。图片来源页可在详情中打开；第三方图片不属于本项目 MIT 许可。
+
+任务目录、目标、钥匙需求、获取方式、地图对象与撤离/转移点来自 [Tarkov.dev JSON API](https://json.tarkov.dev/endpoints)。任务区域坐标取自任务详情中的 `zones` 和 `possibleLocations`；交互地图配置与 SVG 底图来自 [Tarkov.dev 地图项目](https://github.com/the-hideout/tarkov-dev)及[地图素材仓库](https://github.com/the-hideout/tarkov-dev-svg-maps)，按地图作者显示署名。SVG 地图素材采用 [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/)；该素材许可与本项目原创代码的 MIT 许可相互独立，不能据此将地图重新许可为 MIT。藏身处升级材料也使用 Tarkov.dev。以上均为社区资料而非 BSG 官方接口；任务 API 未标注具体游戏补丁覆盖版本，数据可能过时、不完整或因游戏模式而不同，请以游戏内实际内容为准。来源缺少可靠信息时，助手不会推测钥匙获取方法或点位。
 
 本项目原创代码采用 [MIT License](LICENSE)。Windows 可执行文件包含的第三方开源组件及其许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。游戏商标和第三方来源内容不属于本项目许可证授予范围。
+
+自动化检查可用 `EFTTaskAssistant.exe --port 18765 --mobile-port 18766 --no-browser` 指定独立测试端口并避免自动打开浏览器。固定端口被占用时会报错，不会连接或替换其他实例；不加参数时维持原有启动行为。

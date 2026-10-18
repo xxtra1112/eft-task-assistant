@@ -29,6 +29,7 @@
   --map-annotation-location: #8b95a7;
   --map-annotation-pmc: #3197f5;
   --map-annotation-scav: #f39c47;
+  --map-annotation-unknown: #aeb3bf;
   --map-annotation-transfer: #bd82f6;
   --map-annotation-shared: #61c69b;
   --ui-space-1: 4px;
@@ -277,6 +278,9 @@ input:focus, select:focus, textarea:focus { border-color: var(--focus); box-shad
 .map-heading-actions { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 8px 12px; }
 .map-source-link { color: var(--muted); font-size: 11px; text-decoration: none; }
 .map-source-link:hover { color: var(--text); text-decoration: underline; }
+.map-source-attribution { color: var(--muted); font-size: 10px; }
+.map-source-attribution a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.map-source-attribution a:hover { color: var(--text); }
 .mobile-pairing-dialog { width: min(470px, calc(100% - 28px)); max-height: min(90vh, 780px); overflow: auto; padding: 21px; }
 .mobile-pairing-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .mobile-pairing-heading h2 { margin: 3px 0 0; font-size: 19px; }
@@ -304,6 +308,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--focus); box-shad
 .annotation-swatch.is-location { border-radius: 2px; background: var(--map-annotation-location); }
 .annotation-swatch.is-pmc { border-radius: 50%; background: var(--map-annotation-pmc); }
 .annotation-swatch.is-scav { transform: rotate(45deg); background: var(--map-annotation-scav); }
+.annotation-swatch.is-unknown-exit { border: 1px solid var(--map-annotation-unknown); background: transparent; }
 .annotation-swatch.is-transfer { clip-path: polygon(50% 0, 100% 100%, 0 100%); background: var(--map-annotation-transfer); }
 .map-display-controls { display: flex; min-width: 0; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 14px; }
 .map-legend { display: flex; align-items: center; flex-wrap: wrap; gap: 7px 14px; color: var(--muted); font-size: 10px; }
@@ -351,9 +356,11 @@ input:focus, select:focus, textarea:focus { border-color: var(--focus); box-shad
 .map-annotation-marker:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 .map-annotation-marker[data-category="pmc-exit"] { --annotation-color: var(--map-annotation-pmc); }
 .map-annotation-marker[data-category="scav-exit"] { --annotation-color: var(--map-annotation-scav); }
+.map-annotation-marker[data-category="unknown-exit"] { --annotation-color: var(--map-annotation-unknown); }
 .map-annotation-marker[data-category="transfer"] { --annotation-color: var(--map-annotation-transfer); }
 .map-annotation-marker[data-category="shared-exit"] { --annotation-color: var(--map-annotation-shared); }
 .map-annotation-marker[data-category="scav-exit"]::before { content: "S"; }
+.map-annotation-marker[data-category="unknown-exit"]::before { content: "?"; }
 .map-annotation-marker[data-category="transfer"]::before { content: "↗"; font-size: 9px; }
 .map-annotation-marker[data-category="shared-exit"]::before { content: "↔"; font-size: 9px; }
 .map-marker:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }

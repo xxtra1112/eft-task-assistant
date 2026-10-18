@@ -26,3 +26,13 @@ PyInstaller 6.22.3 is used to build the executable. PyInstaller is licensed unde
 The versions above describe the published binary. Rebuilding from source may resolve different compatible dependency versions; consult each package's own license and notices when redistributing a rebuilt executable.
 
 The app may use the public [wsrv.nl](https://wsrv.nl/) image proxy as a browser-side fallback when an item image host is unavailable. It is an online service, is not bundled with the executable, and receives only the public image URL being requested.
+
+## Online game data and map artwork
+
+The app retrieves quest, map, extract, transit, and Hideout data from the public [Tarkov.dev JSON API](https://json.tarkov.dev/endpoints). Interactive-map configuration is read from [the Tarkov.dev project](https://github.com/the-hideout/tarkov-dev). These are community resources, not official Battlestate Games services, and are not bundled as a local database in the executable.
+
+SVG basemaps are fetched on demand from `assets.tarkov.dev`, which serves maps maintained in [the tarkov-dev-svg-maps repository](https://github.com/the-hideout/tarkov-dev-svg-maps). The repository's map artwork is licensed under [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/), separately from this project's MIT-licensed code. The interface links to the map source and displays the map author and license when the upstream metadata provides an author. Do not assume this license permits commercial use or relicenses artwork as MIT; review the upstream license and attribution requirements before redistribution. The app uses the maps as a standalone quest-planning tool and does not read game memory, show live player positions, or automate gameplay.
+
+## EFTarkov waypoint photographs
+
+A limited set of reviewed PvE Factory waypoint photographs is loaded from public pages on https://www.eftarkov.com. Each photograph retains a link to its map marker source. These third-party photographs are not bundled in the executable or granted under this project's MIT license; the game imagery and source content remain subject to their respective owners' rights. Task data and coordinates continue to use Tarkov.dev.

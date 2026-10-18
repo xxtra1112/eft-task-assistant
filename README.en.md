@@ -36,7 +36,7 @@
 
 ## Screenshots
 
-These captures use an isolated demo profile and do not include anyone's local save or game screenshots. Quest and map details come from [EFTarkov](https://www.eftarkov.com/) public data and may change. The screenshots show the Chinese interface; use the in-app **EN** button to switch to English.
+These captures use an isolated demo profile and do not include anyone's local save or game screenshots. Quest catalogs, map data, extracts, and quest coordinates come from the [Tarkov.dev JSON API](https://json.tarkov.dev/endpoints); interactive-map configuration and SVG basemaps use public Tarkov.dev community map resources and may change upstream. The screenshots show the Chinese interface; use the in-app **EN** button to switch to English.
 
 ![Desktop workspace with screenshot recognition and the quest list side by side](docs/images/desktop-overview-zh.png)
 
@@ -80,7 +80,7 @@ Internet access is needed for the initial dependency installation and online cat
 ## First-time setup
 
 1. **Create a profile.** Enter a profile name on first launch to get started; the initial profile defaults to PvE. You can later create additional profiles for PvE, regular PvP, or season PvP saves.
-2. **Load quest data.** Expand **Quest List → Import from EFTarkov quest catalog** and select **Sync public catalog**. Once synced, search, preview, and import quests. Online data may change or be temporarily unavailable.
+2. **Load quest data.** Expand **Quest List → Tarkov.dev JSON API** and select **Sync public catalog**. Once synced, search, preview, and import quests. Online data may change or be temporarily unavailable.
 3. **Choose your screenshot folder.** Select **Choose screenshot folder**, choose the game's actual `Screenshots` directory on this computer, and grant the browser permission when prompted.
 4. **Start planning.** Review the quest list, filter by map, check your keys, and choose Hideout stations and target levels.
 
@@ -120,7 +120,7 @@ Quests, profiles, and screenshot-recognition records stay on the computer runnin
 
 Hideout upgrade targets, owned material counts, quest and key visibility settings, map route drawings, and other interface preferences are stored in the local browser storage and scoped to the profile. They do not sync to other browsers or devices and are not included in the app data-folder backup below. Clearing browser site data may erase them.
 
-Screenshots are not sent to cloud AI; when syncing quest, map, or Hideout data, the app accesses public sources such as [EFTarkov](https://www.eftarkov.com/) and [Tarkov.dev](https://tarkov.dev/). If an item image cannot load from its primary host, the browser retries the same public image through [wsrv.nl](https://wsrv.nl/); no profile data, screenshots, or quest list is sent.
+Screenshots are not sent to cloud AI. Quest, map, and Hideout sync use the [Tarkov.dev JSON API](https://json.tarkov.dev/endpoints) and public Tarkov.dev map resources. Waypoint photo supplements and their verification read public EFTarkov map pages. If an item image cannot load from its primary host, the browser retries the same public image through [wsrv.nl](https://wsrv.nl/); no profile data, screenshots, or quest list is sent.
 
 ## Back up your data
 
@@ -152,7 +152,7 @@ To build a single-file Windows x64 executable, activate a Conda environment with
 
 ~~~powershell
 python -m pip install -r requirements-build.txt
-& "$PWD/build_windows.ps1" -Version 1.1.1
+& "$PWD/build_windows.ps1" -Version 1.2.0
 ~~~
 
 The executable is written to the `dist` directory. Building requires Windows x64, Python 3.11, and internet access to install and bundle the OCR runtime dependencies. Bug reports and improvement suggestions are welcome on GitHub Issues.
@@ -163,6 +163,10 @@ GitHub Actions checks Python dependencies and imports, Python compilation, and f
 
 ## Data sources and license
 
-Quest details, key requirements, and map points primarily come from [EFTarkov](https://www.eftarkov.com/). Hideout upgrade materials come from [Tarkov.dev](https://tarkov.dev/). These are community sources, not official game APIs; their data may be outdated, incomplete, or differ by game mode. EFT tasks and data change over time, so verify requirements in the game. The app does not guess key acquisition methods or point locations when reliable source data is unavailable.
+Waypoint photos are supplemented from public EFTarkov (`www.eftarkov.com`) map pages. Initial reviewed coverage is limited to two PvE Factory waypoints (Postman Pat Part 1 and Delivery from the Past), with four location photos; this is not a complete restoration. Records bind the exact task, map, current waypoint ID, floor and coordinates and recheck the legacy marker and photo URLs. Unverified points and other game modes remain without photos. Task covers, item artwork and map backgrounds are not substituted for location photos. Cached details are enriched on read without resetting tasks or visits. Source failures leave tasks/maps available, and failed images show a message. Photo source pages are linked in details; third-party photos are not licensed under this project's MIT license.
+
+Quest catalogs, objectives, key requirements, acquisition methods, map objects, and extracts/transits come from the [Tarkov.dev JSON API](https://json.tarkov.dev/endpoints). Quest coordinates use the `zones` and `possibleLocations` fields in quest details. Interactive-map configuration and SVG basemaps come from the [Tarkov.dev map project](https://github.com/the-hideout/tarkov-dev) and its [map-art repository](https://github.com/the-hideout/tarkov-dev-svg-maps), with map authors credited in the interface. The SVG map artwork is licensed under [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/); this is separate from the MIT license for this project's original code and does not relicense map assets as MIT. Hideout data also uses Tarkov.dev. These are community sources, not official BSG APIs; the quest API does not label exact game-patch coverage, and data may be outdated, incomplete, or differ by game mode. Verify requirements in game. The app does not guess key acquisition methods or point locations when reliable source data is unavailable.
 
 Original code in this project is available under the [MIT License](LICENSE). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the open-source components bundled in the Windows executable. Game trademarks and third-party content are not relicensed by this project.
+
+For isolated automation, use `EFTTaskAssistant.exe --port 18765 --mobile-port 18766 --no-browser`. An occupied explicit port fails rather than falling back to another instance. Default startup behavior is unchanged.

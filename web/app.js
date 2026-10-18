@@ -103,6 +103,7 @@ const elements = {
   mapFullscreenButton: document.querySelector("#mapFullscreenButton"),
   mapPlaceholder: document.querySelector("#mapPlaceholder"),
   mapSourceLink: document.querySelector("#mapSourceLink"),
+  mapArtworkAttribution: document.querySelector("#mapArtworkAttribution"),
   mapSummary: document.querySelector("#mapSummary"),
   mapTargetList: document.querySelector("#mapTargetList"),
   mapHint: document.querySelector("#mapHint"),
@@ -180,28 +181,30 @@ const UI_TRANSLATIONS = Object.freeze({
   "所需数量": "Quantity needed",
   "不计数留空": "Leave blank if not countable",
   "保存任务": "Save quest",
-  "从 EFTarkov 任务资料库导入": "Import from EFTarkov quest catalog",
+  "从 Tarkov.dev JSON API 导入任务": "Import quests from the Tarkov.dev JSON API",
   "同步公开目录": "Sync public catalog",
   "搜索任务名或商人": "Search quest or trader",
   "尚未同步任务资料。": "Quest catalog has not been synced.",
   "先同步目录，再搜索要追踪的任务。": "Sync the catalog, then search for a quest to track.",
   "加入清单": "Add to list",
-  "打开 EFTarkov 来源页": "Open EFTarkov source",
-  "来源页面标注版本不等于游戏补丁版本；覆盖情况未经官方逐项核对。资料只作为人工确认的候选，不会自动标记完成或修改进度。": "The source page version may differ from the game patch. Coverage is not verified item by item; imported data is a reviewable suggestion and never changes quest progress automatically.",
+  "打开 Tarkov.dev API 来源": "Open Tarkov.dev API source",
+  "API 未标注具体游戏补丁版本，任务覆盖范围未经官方逐项核对。资料只作为人工确认的候选，不会自动标记完成或修改进度。": "The API does not identify an exact game patch, and quest coverage is not verified item by item. Imported data is a reviewable suggestion and never changes quest progress automatically.",
   "0 种": "0 types",
   "钥匙默认未勾选，勾选后显示关联任务及地图点位；新钥匙会提示确认是否已有。": "Keys start unchecked. Check one to show related quests and map points. New keys prompt you to confirm whether you own them.",
-  "EFTarkov 地图来源": "EFTarkov map source",
+  "Tarkov.dev 地图来源": "Tarkov.dev map source",
   "地图标注": "Map annotations",
   "地图地点": "Map locations",
   "PMC撤离点": "PMC extracts",
   "SCAV撤离点": "SCAV extracts",
+  "未分类撤离点": "Unclassified extracts",
   "转移点": "Transit points",
+  "Tarkov.dev 暂未提供独立赛季 PvP 目录，不会套用常规 PvP 数据。": "Tarkov.dev does not currently provide a separate seasonal PvP catalog; regular PvP data is not substituted.",
   "地点": "Locations",
   "PMC撤离": "PMC extracts",
   "SCAV撤离": "SCAV extracts",
   "左键编号标记查看点位信息，右键切换到访勾选（勾显示在标记右下角）；右侧可隐藏单个点或查看全部说明图片。悬停撤离/转移标记可立即查看名称和楼层。": "Left-click numbered markers for point details; right-click to toggle visited status (the check appears at the marker's bottom-right). Hide individual points or view all source images in the list. Hover over extract/transit markers for instant names and floor details.",
   "悬停撤离/转移点立即查看名称和楼层；点击标记查看来源图片。": "Hover over extract/transit points for instant names and floor details; click a marker to view source images.",
-  "底图、地点与撤离/转移点数据来自 EFTarkov 公开页面；可用上方开关筛选地图地点、PMC 撤离点、SCAV 撤离点和转移点。任务点位及标注保留楼层信息，任务隐藏会同步地图任务点位；右键任务标点可切换到访勾选。": "Basemap, locations, extraction points, and transit points come from EFTarkov. Use the switches above to filter locations, PMC/SCAV extracts, and transit points. Quest markers and annotations retain floor details; hiding a quest also hides its quest markers. Right-click quest markers to toggle visited status.",
+  "地图底图、任务区域、地点、撤离点与转移点来自 Tarkov.dev 公开资料；可用上方开关筛选地图地点、PMC/SCAV/未分类撤离点和转移点。任务点位及标注保留楼层信息，楼层切换只更换底图；右键任务标点可切换到访勾选。任务区域目前不附带独立说明图片。": "Basemaps, quest zones, locations, extracts, and transits use public Tarkov.dev data. Use the switches above to filter locations, PMC/SCAV/unclassified extracts, and transits. Quest markers retain floor details; changing floors only changes the basemap. Right-click a quest marker to toggle its visited check. Quest zones currently have no separate info images.",
   "手机地图二维码": "Mobile map QR code",
   "MOBILE RAID MAP": "MOBILE RAID MAP",
   "手机随身地图": "Mobile raid map",
@@ -253,7 +256,7 @@ const UI_TRANSLATIONS = Object.freeze({
   "正在加载地图目录…": "Loading map catalog…",
   "左键查看点位信息，右键标记/取消已到访（标记右下角显示勾）；右侧可从要求链接查看点位，或单独隐藏该点。": "Left-click a marker for details; right-click to toggle its visited check. Use the links on the right for waypoint details or hide an individual point.",
   "选择地图后显示已追踪任务的自动点位。": "Tracked quest waypoints appear after you select a map.",
-  "底图与任务目标坐标来自 EFTarkov 公开页面；地图仅显示任务目标，不标记钥匙用途位置。楼层切换只更换底图，标点始终显示该地图所有楼层的任务点，地点保留楼层名；右侧任务组的“隐藏/显示”会同步任务清单与地图点位，右键标点可切换到访勾选。": "Map images and quest coordinates come from EFTarkov public pages. Maps show quest objectives, not key-use locations. Switching floors changes only the base image; markers from every floor remain visible, with floor names retained. Hiding a quest group also hides it in the quest list. Right-click a marker to toggle its visited check.",
+  "地图底图与任务区域坐标来自 Tarkov.dev；地图只标记任务目标，不标记钥匙用途位置。楼层切换只更换底图，标点始终显示该地图所有楼层的任务点，地点保留楼层名；右侧任务组的“隐藏/显示”会同步任务清单与地图点位，右键标点可切换到访勾选。": "Map images and quest zones come from Tarkov.dev. Maps show quest objectives, not key-use locations. Switching floors changes only the basemap; markers from every floor remain visible, with floor names retained. Hiding a quest group also hides it in the quest list. Right-click a marker to toggle its visited check.",
   "升级目标": "Upgrade targets",
   "收起": "Collapse",
   "展开": "Expand",
@@ -278,7 +281,7 @@ const UI_TRANSLATIONS = Object.freeze({
   "上一张": "Previous",
   "下一张点位图片": "Next waypoint image",
   "下一张": "Next",
-  "打开 EFTarkov 点位来源": "Open EFTarkov waypoint source",
+  "打开 Tarkov.dev 任务来源": "Open Tarkov.dev quest source",
   "确认是否已有这把钥匙": "Do you already own this key?",
   "稍后": "Later",
   "我还没有": "I don't have it",
@@ -345,7 +348,7 @@ const UI_TRANSLATIONS = Object.freeze({
   "任务地图位置": "Quest map locations",
   "详情页暂无可验证的自动点位；资料库更新后会在地图区自动显示。": "No verifiable automatic waypoints are available yet. They will appear on the map when the catalog is updated.",
   "正在读取任务目标…": "Loading quest objectives…",
-  "任务点位已读取，但 EFTarkov 底图暂时无法加载；请检查网络后重试。": "Waypoint data loaded, but the EFTarkov map image is unavailable. Check the network and try again.",
+  "任务点位已读取，但 Tarkov.dev 底图暂时无法加载；请检查网络后重试。": "Waypoint data loaded, but the Tarkov.dev map image is unavailable. Check the network and try again.",
   "未能载入地图数据。": "Map data could not be loaded.",
   "截图预览加载失败": "Screenshot preview failed to load",
   "任务已加入当前档案": "Quest added to this profile",
@@ -373,6 +376,8 @@ function translateUiText(value) {
 function translateDynamicUiText(text) {
   const patterns = currentLanguage === "en"
     ? [
+      [/^(\d+) 个超出底图范围的地图标注已略过。$/u, ([, count]) => `${count} out-of-bounds map annotations were omitted.`],
+      [/^([\d,]+) 条任务 · Tarkov\.dev JSON API · (.+) · 获取于 (.+) · 游戏补丁覆盖未核实$/u, ([, count, version, fetchedAt]) => `${count} quests · Tarkov.dev JSON API · ${version} · Fetched ${fetchedAt} · game patch coverage unverified`],
       [/^需求 ([\d,]+) 件 · 已有 ([\d,]+) 件 · 尚缺 ([\d,]+) 件$/u, ([, required, owned, missing]) => `Required ${required} · Owned ${owned} · Missing ${missing}`],
       [/^需求 ([\d,]+) 件$/u, ([, count]) => `Required ${count} items`],
       [/^尚缺 ([\d,]+) 件$/u, ([, count]) => `${count} items missing`],
@@ -399,6 +404,8 @@ function translateDynamicUiText(text) {
       [/^尚缺 ([€$₽][\d,]+)$/u, ([, amount]) => `${amount} missing`],
     ]
     : [
+      [/^(\d+) out-of-bounds map annotations were omitted\.$/u, ([, count]) => `${count} 个超出底图范围的地图标注已略过。`],
+      [/^([\d,]+) quests · Tarkov\.dev JSON API · (.+) · Fetched (.+) · game patch coverage unverified$/u, ([, count, version, fetchedAt]) => `${count} 条任务 · Tarkov.dev JSON API · ${version} · 获取于 ${fetchedAt} · 游戏补丁覆盖未核实`],
       [/^Required ([\d,]+) · Owned ([\d,]+) · Missing ([\d,]+)$/u, ([, required, owned, missing]) => `需求 ${required} 件 · 已有 ${owned} 件 · 尚缺 ${missing} 件`],
       [/^Required ([\d,]+) items$/u, ([, count]) => `需求 ${count} 件`],
       [/^([\d,]+) items missing$/u, ([, count]) => `尚缺 ${count} 件`],
@@ -533,6 +540,7 @@ function applyLanguage(language, persist = false) {
   elements.languageToggle.setAttribute("aria-label", targetLanguageLabel);
   elements.languageToggle.title = targetLanguageLabel;
   localizeElement(document.body);
+  refreshMapLanguage();
   if (persist) safeStorageSet("eft-task-assistant-language", currentLanguage);
 }
 
@@ -597,6 +605,7 @@ let mobilePairingQueue = Promise.resolve();
 let mapPointImageUrls = [];
 let mapDetailWarnings = [];
 let mapTaskIdsByMap = new Map();
+let mapNamesById = new Map();
 let mapZoom = 1;
 let mapPan = null;
 const hiddenTaskIds = new Set();
@@ -655,6 +664,7 @@ function defaultUiPreferences() {
       location: true,
       "pmc-exit": false,
       "scav-exit": false,
+      "unknown-exit": false,
       transfer: false,
     },
     taskTraderFilter: "",
@@ -2071,15 +2081,64 @@ function deferKeyOwnershipQuestion() {
 function updateTaskMapFilterOptions(tasks) {
   for (const option of elements.taskMapFilter.options) {
     if (!option.value) continue;
-    const mapName = option.dataset.mapName || option.textContent.split(" · ")[0];
-    option.dataset.mapName = mapName;
+    const mapRecord = mapNamesById.get(option.value);
+    const mapName = currentLanguage === "en"
+      ? mapRecord?.name_en || option.dataset.mapNameEn || option.dataset.mapName || option.textContent.split(" · ")[0]
+      : mapRecord?.name || option.dataset.mapName || option.textContent.split(" · ")[0];
     const taskIds = mapTaskIdsByMap.get(option.value) || new Set();
     const mapTasks = tasks.filter((task) => taskIds.has(String(task.id)));
     const visibleCount = mapTasks.filter((task) => (
       showHiddenTasks || (!hiddenTaskIds.has(String(task.id)) && !taskHiddenByKey(task))
     )).length;
-    option.textContent = mapName + " · " + visibleCount + "/" + mapTasks.length + " 个任务";
+    option.textContent = currentLanguage === "en"
+      ? `${mapName} · ${visibleCount}/${mapTasks.length} quests`
+      : `${mapName} · ${visibleCount}/${mapTasks.length} 个任务`;
   }
+}
+
+function updateMapArtworkAttribution() {
+  const attribution = elements.mapArtworkAttribution;
+  if (!attribution) return;
+  attribution.replaceChildren();
+  const author = mapView?.map_author;
+  if (!author) {
+    attribution.hidden = true;
+    return;
+  }
+  attribution.hidden = false;
+  attribution.append(document.createTextNode(currentLanguage === "en" ? `Map artwork: ${author} · ` : `地图作者：${author} · `));
+  const license = document.createElement("a");
+  license.href = mapView.map_license_url || "https://creativecommons.org/licenses/by-nc-sa/4.0/";
+  license.target = "_blank";
+  license.rel = "noopener noreferrer";
+  license.textContent = mapView.map_license || "CC BY-NC-SA 4.0";
+  attribution.append(license);
+}
+
+function refreshMapLanguage() {
+  for (const option of elements.mapSelect.options) {
+    if (!option.value) continue;
+    const map = mapNamesById.get(option.value);
+    const mapName = currentLanguage === "en"
+      ? map?.name_en || option.dataset.mapNameEn || option.dataset.mapName || option.textContent.split(" · ")[0]
+      : map?.name || option.dataset.mapName || option.textContent.split(" · ")[0];
+    const pointCount = Number(option.dataset.activePointCount || 0);
+    option.textContent = pointCount
+      ? currentLanguage === "en" ? `${mapName} · ${pointCount} points` : `${mapName} · ${pointCount} 个点位`
+      : mapName;
+  }
+  if (state) updateTaskMapFilterOptions(state.tasks);
+  if (!mapView) return;
+  for (const option of elements.mapFloorSelect.options) {
+    option.textContent = currentLanguage === "en"
+      ? option.dataset.nameEn || option.dataset.nameZh || option.textContent
+      : option.dataset.nameZh || option.textContent;
+  }
+  if (elements.mapSourceLink.href) {
+    elements.mapSourceLink.textContent = currentLanguage === "en" ? "Tarkov.dev map source" : "Tarkov.dev 地图来源";
+  }
+  updateMapArtworkAttribution();
+  renderMapTargets(mapView.markers || [], mapView.tasks || []);
 }
 
 function hideoutPlanFor(station) {
@@ -2635,7 +2694,7 @@ function renderTasks(tasks) {
       source.href = task.source_url;
       source.target = "_blank";
       source.rel = "noopener noreferrer";
-      source.textContent = `来源 · ${task.source_version || "EFTarkov"}`;
+      source.textContent = `来源 · ${task.source_version || "Tarkov.dev JSON API"}`;
       heading.append(source);
     }
     const collapseButton = document.createElement("button");
@@ -2882,10 +2941,10 @@ function renderCatalogSummary() {
       ? catalog.source_version
       : "版本未知";
     const fetchedAt = catalog.fetched_at ? new Date(catalog.fetched_at).toLocaleString() : "时间未知";
-    elements.catalogSummary.textContent = `${catalog.task_count} 条任务 · EFTarkov 页面标注 ${version} · 获取于 ${fetchedAt} · 游戏补丁覆盖未核实`;
+    elements.catalogSummary.textContent = `${catalog.task_count} 条任务 · Tarkov.dev JSON API · ${version} · 获取于 ${fetchedAt} · 游戏补丁覆盖未核实`;
   } else {
     elements.catalogSummary.textContent = unsupportedSeason
-      ? "EFTarkov 未提供独立赛季 PvP 目录，不会套用常规 PvP 数据。"
+      ? "Tarkov.dev 暂未提供独立赛季 PvP 目录，不会套用常规 PvP 数据。"
       : "尚未同步任务资料。同步只读取公开任务页面，不会覆盖个人进度。";
   }
   elements.catalogStatus.textContent = state?.catalog_error || state?.catalog_status || "";
@@ -3281,6 +3340,7 @@ async function loadMapIndex({ preserveSelection = false, restorePreferences = fa
     const preferredTaskMapId = restorePreferences ? uiPreferences?.taskMapFilter : previousTaskMapId;
     mapDetailWarnings = result.detail_warnings || [];
     mapTaskIdsByMap = new Map();
+    mapNamesById = new Map((result.maps || []).map((map) => [String(map.map_id), map]));
     elements.taskMapFilter.replaceChildren();
     const allMapsOption = document.createElement("option");
     allMapsOption.value = "";
@@ -3291,9 +3351,15 @@ async function loadMapIndex({ preserveSelection = false, restorePreferences = fa
       mapTaskIdsByMap.set(String(map.map_id), new Set(taskIds));
       const option = document.createElement("option");
       option.value = String(map.map_id);
-      option.textContent = map.active_task_count
-        ? `${map.name} · ${map.active_task_count} 个任务`
-        : map.name;
+      option.dataset.mapName = map.name || "";
+      option.dataset.mapNameEn = map.name_en || map.name || "";
+      option.textContent = currentLanguage === "en"
+        ? map.active_task_count
+          ? `${map.name_en || map.name} · ${map.active_task_count} quests`
+          : map.name_en || map.name
+        : map.active_task_count
+          ? `${map.name} · ${map.active_task_count} 个任务`
+          : map.name;
       elements.taskMapFilter.append(option);
     }
     elements.taskMapFilter.value = [...elements.taskMapFilter.options]
@@ -3304,9 +3370,16 @@ async function loadMapIndex({ preserveSelection = false, restorePreferences = fa
     for (const map of result.maps || []) {
       const option = document.createElement("option");
       option.value = map.map_id;
-      option.textContent = map.active_point_count
-        ? `${map.name} · ${map.active_point_count} 个点位`
-        : map.name;
+      option.dataset.mapName = map.name || "";
+      option.dataset.mapNameEn = map.name_en || map.name || "";
+      option.dataset.activePointCount = String(map.active_point_count || 0);
+      option.textContent = currentLanguage === "en"
+        ? map.active_point_count
+          ? `${map.name_en || map.name} · ${map.active_point_count} points`
+          : map.name_en || map.name
+        : map.active_point_count
+          ? `${map.name} · ${map.active_point_count} 个点位`
+          : map.name;
       elements.mapSelect.append(option);
     }
     if (!elements.mapSelect.options.length) throw new Error("地图目录为空");
@@ -3327,7 +3400,9 @@ async function loadMapIndex({ preserveSelection = false, restorePreferences = fa
   } catch (error) {
     elements.mapPlaceholder.textContent = `地图目录读取失败：${error.message}`;
     elements.mapSourceLink.removeAttribute("href");
+    elements.mapArtworkAttribution.hidden = true;
     mapTaskIdsByMap.clear();
+    mapNamesById.clear();
     elements.taskMapFilter.replaceChildren(new Option("全部地图", ""));
     if (state) renderTasks(state.tasks);
   }
@@ -3383,13 +3458,15 @@ function renderMapAnnotations() {
     if (activeCategories.includes("location")) {
       const label = document.createElement("span");
       label.className = "map-location-label";
-      label.textContent = annotation.title;
+      label.textContent = currentLanguage === "en" ? annotation.title_en || annotation.title : annotation.title;
       label.style.left = annotation.x_percent + "%";
       label.style.top = annotation.y_percent + "%";
       elements.mapMarkers.append(label);
       continue;
     }
-    const category = activeCategories.length > 1 ? "shared-exit" : activeCategories[0];
+    const category = activeCategories.includes("pmc-exit") && activeCategories.includes("scav-exit")
+      ? "shared-exit"
+      : activeCategories[0];
     const button = document.createElement("button");
     button.type = "button";
     button.className = "map-annotation-marker";
@@ -3423,7 +3500,9 @@ function renderMapAnnotations() {
     button.addEventListener("blur", hideMapTooltip);
     button.addEventListener("click", () => showMapPointImage({
       ...annotation,
-      task_title: annotation.annotation_label || "地图标注",
+      task_title: currentLanguage === "en"
+        ? annotation.annotation_label_en || annotation.annotation_label || "Map annotation"
+        : annotation.annotation_label || "地图标注",
       pointNumber: 1,
       groupCount: 1,
     }));
@@ -3471,11 +3550,11 @@ function mapMarkerVisitTitle(marker) {
   return [
     english ? `Quest ${marker.groupNumber}` : `任务 ${marker.groupNumber}`,
     marker.task_title,
-    marker.floor_name,
+    currentLanguage === "en" ? marker.floor_name_en || marker.floor_name : marker.floor_name,
     english ? `Point ${marker.pointNumber}/${marker.groupCount}` : `点位 ${marker.pointNumber}/${marker.groupCount}`,
-    marker.title,
+    currentLanguage === "en" ? marker.title_en || marker.title : marker.title,
     marker.visited ? (english ? "✓ Visited" : "✓ 已到访") : "",
-    marker.description,
+    currentLanguage === "en" ? marker.description_en || marker.description : marker.description,
     english ? "Left-click to view point details" : "左键查看点位信息",
     english ? "Right-click or Shift+Enter to toggle visited" : "右键或 Shift+Enter 切换到访勾选",
   ].filter(Boolean).join("\n");
@@ -3483,17 +3562,22 @@ function mapMarkerVisitTitle(marker) {
 
 function mapAnnotationTooltipText(annotation) {
   const categoryLabels = (annotation.categories || []).map((category) => {
-    const categoryLabel = annotation.category_labels?.[category] || "地图标注";
+    const categoryLabel = currentLanguage === "en"
+      ? annotation.category_labels_en?.[category] || annotation.category_labels?.[category] || "Map annotation"
+      : annotation.category_labels?.[category] || "地图标注";
     return translateUiText(categoryLabel);
   });
+  const titleText = currentLanguage === "en" ? annotation.title_en || annotation.title : annotation.title;
+  const floorName = currentLanguage === "en" ? annotation.floor_name_en || annotation.floor_name : annotation.floor_name;
+  const description = currentLanguage === "en" ? annotation.description_en || annotation.description : annotation.description;
   const title = [
     [...new Set(categoryLabels)].join(" / "),
-    annotation.title,
+    titleText,
   ].filter(Boolean).join(" · ");
   return [
     title,
-    annotation.floor_name ? `${translateUiText("楼层")}: ${annotation.floor_name}` : "",
-    annotation.description,
+    floorName ? (currentLanguage === "en" ? "Floor: " : "楼层：") + floorName : "",
+    description,
   ].filter(Boolean).join("\n");
 }
 
@@ -3631,12 +3715,15 @@ function setMapPointHidden(marker, hidden) {
 
 function safePointImageUrl(value) {
   try {
-    const url = new URL(value, "https://www.eftarkov.com");
-    if (url.hostname === "eftarkov.com") url.hostname = "www.eftarkov.com";
+    const url = new URL(value, "https://assets.tarkov.dev");
+    const approvedAsset = url.hostname === "assets.tarkov.dev"
+      && /^\/(?:[A-Za-z0-9._/-]+)\.(?:webp|png|jpe?g)$/i.test(url.pathname);
+    const approvedPointPhoto = url.hostname === "www.eftarkov.com"
+      && /^\/uploads\/infoImg\/[A-Za-z0-9_-]+\.(?:webp|png|jpe?g)$/i.test(url.pathname);
     if (
-      url.protocol !== "https:"
-      || url.hostname !== "www.eftarkov.com"
-      || !/^\/uploads\/infoImg\/[A-Za-z0-9._-]+\.(?:webp|png|jpe?g)$/i.test(url.pathname)
+      url.protocol !== "https:" || url.username || url.password || url.port
+      || url.search || url.hash || !(approvedAsset || approvedPointPhoto)
+      || url.pathname.split("/").includes("..")
     ) return "";
     return url.href;
   } catch {
@@ -3667,7 +3754,7 @@ function createPointImageLink(point, options = {}) {
     : "查看点位信息";
   link.title = imageCount
     ? `通过此链接查看该点位的全部 ${imageCount} 张图片和说明`
-    : "打开 EFTarkov 点位说明";
+    : "打开 Tarkov.dev 任务来源页";
   link.addEventListener("click", (event) => {
     event.preventDefault();
     showMapPointImage({
@@ -3685,7 +3772,7 @@ function renderMapPointImage() {
   elements.mapPointImageUnavailable.hidden = mapPointImageUrls.length > 0;
   elements.mapPointImageUnavailable.textContent = mapPointImageUrls.length
     ? ""
-    : "该点位没有可用的说明图片，可打开 EFTarkov 来源页查看。";
+    : "该任务位置目前没有独立说明图片；可打开 Tarkov.dev 任务资料页查看目标。";
   for (const [index, imageUrl] of mapPointImageUrls.entries()) {
     const card = document.createElement("figure");
     card.className = "map-point-image-card";
@@ -3695,6 +3782,7 @@ function renderMapPointImage() {
       : `点位图片 ${index + 1}/${mapPointImageUrls.length}`;
     image.loading = index < 2 ? "eager" : "lazy";
     image.decoding = "async";
+    image.referrerPolicy = "no-referrer";
     image.addEventListener("error", () => {
       image.remove();
       const failure = document.createElement("figcaption");
@@ -3718,8 +3806,11 @@ function showMapPointImage(marker) {
     marker.floor_name,
     marker.description,
   ].filter(Boolean).join(" · ");
-  const sourceUrl = marker.source_page_url || marker.source_url;
+  const sourceUrl = marker.source_image_page_url || marker.source_page_url || marker.source_url;
   elements.mapPointImageSource.hidden = !sourceUrl;
+  elements.mapPointImageSource.textContent = marker.source_image_provider === "eftarkov.com"
+    ? (currentLanguage === "en" ? "Open EFTarkov photo source" : "打开 EFTarkov 图片来源")
+    : (currentLanguage === "en" ? "Open Tarkov.dev source" : "打开 Tarkov.dev 来源");
   if (sourceUrl) elements.mapPointImageSource.href = sourceUrl;
   renderMapPointImage();
   if (!elements.mapPointImageDialog.open) elements.mapPointImageDialog.showModal();
@@ -3891,7 +3982,10 @@ function buildMapPointRow(marker, pointHidden) {
   row.className = `map-point-row${pointHidden ? " is-hidden" : ""}`;
   const location = document.createElement("span");
   location.className = "map-point-location";
-  location.textContent = [marker.title, marker.floor_name].filter(Boolean).join(" · ");
+  location.textContent = [
+    currentLanguage === "en" ? marker.title_en || marker.title : marker.title,
+    currentLanguage === "en" ? marker.floor_name_en || marker.floor_name : marker.floor_name,
+  ].filter(Boolean).join(" · ");
   const infoLink = createPointImageLink(marker, {
     className: "map-point-info-link",
     taskTitle: marker.task_title,
@@ -4097,7 +4191,9 @@ function renderMapTargets(markers, tasks = []) {
   renderMapAnnotations();
   const taskCount = new Set(taskVisibleMarkers.map((marker) => marker.groupKey)).size;
   const hiddenPointCount = taskVisibleMarkers.length - visibleMarkers.length;
-  elements.mapSummary.textContent = `${mapView?.map_name || "地图"} · ${taskCount} 个显示任务组 · ${visibleMarkers.length} 个地图标点${hiddenPointCount ? ` · ${hiddenPointCount} 个已隐藏` : ""}`;
+  elements.mapSummary.textContent = currentLanguage === "en"
+    ? `${mapView?.map_name_en || mapView?.map_name || "Map"} · ${taskCount} visible quest groups · ${visibleMarkers.length} map markers${hiddenPointCount ? ` · ${hiddenPointCount} hidden` : ""}`
+    : `${mapView?.map_name || "地图"} · ${taskCount} 个显示任务组 · ${visibleMarkers.length} 个地图标点${hiddenPointCount ? ` · ${hiddenPointCount} 个已隐藏` : ""}`;
 }
 
 function setMapZoom(value, persist = true) {
@@ -4191,7 +4287,9 @@ async function loadMapView(requestedFloorKey = "") {
     for (const floor of floors) {
       const option = document.createElement("option");
       option.value = String(floor.key);
-      option.textContent = floor.name || `楼层 ${floor.key}`;
+      option.dataset.nameZh = floor.name || `楼层 ${floor.key}`;
+      option.dataset.nameEn = floor.name_en || floor.name || `Floor ${floor.key}`;
+      option.textContent = currentLanguage === "en" ? option.dataset.nameEn : option.dataset.nameZh;
       elements.mapFloorSelect.append(option);
     }
     elements.mapFloorSelect.value = String(result.floor?.key || "");
@@ -4206,20 +4304,29 @@ async function loadMapView(requestedFloorKey = "") {
       .map((marker) => String(marker.task_id)));
     const mapOption = [...elements.mapSelect.options].find((option) => option.value === String(result.map_id));
     if (mapOption) {
+      mapOption.dataset.mapName = result.map_name || "";
+      mapOption.dataset.mapNameEn = result.map_name_en || result.map_name || "";
+      mapOption.dataset.activePointCount = String(activeMarkers.length);
+      const mapName = currentLanguage === "en" ? result.map_name_en || result.map_name : result.map_name;
       mapOption.textContent = activeMarkers.length
-        ? `${result.map_name} · ${activeMarkers.length} 个点位`
-        : result.map_name;
+        ? currentLanguage === "en" ? `${mapName} · ${activeMarkers.length} points` : `${mapName} · ${activeMarkers.length} 个点位`
+        : mapName;
     }
     const taskMapOption = [...elements.taskMapFilter.options]
       .find((option) => option.value === String(result.map_id));
     if (taskMapOption) {
+      taskMapOption.dataset.mapName = result.map_name || "";
+      taskMapOption.dataset.mapNameEn = result.map_name_en || result.map_name || "";
+      const mapName = currentLanguage === "en" ? result.map_name_en || result.map_name : result.map_name;
       taskMapOption.textContent = activeTaskIds.size
-        ? `${result.map_name} · ${activeTaskIds.size} 个任务`
-        : result.map_name;
+        ? currentLanguage === "en" ? `${mapName} · ${activeTaskIds.size} quests` : `${mapName} · ${activeTaskIds.size} 个任务`
+        : mapName;
       if (elements.taskMapFilter.value === String(result.map_id) && state) renderTasks(state.tasks);
     }
     if (state) updateTaskMapFilterOptions(state.tasks);
     elements.mapSourceLink.href = result.source_url;
+    elements.mapSourceLink.textContent = currentLanguage === "en" ? "Tarkov.dev map source" : "Tarkov.dev 地图来源";
+    updateMapArtworkAttribution();
     renderMapTargets(result.markers || [], result.tasks || []);
     renderMapDrawings();
     elements.mapImage.hidden = false;
@@ -4232,14 +4339,14 @@ async function loadMapView(requestedFloorKey = "") {
       if (generation !== mapViewGeneration) return;
       elements.mapImage.hidden = true;
       elements.mapPlaceholder.hidden = false;
-      elements.mapPlaceholder.textContent = "地图点位已读取，但 EFTarkov 底图暂时无法加载；请检查网络后重试。";
+      elements.mapPlaceholder.textContent = "任务点位已读取，但 Tarkov.dev 底图暂时无法加载；请检查网络后重试。";
       updateMapDrawingButtons();
     };
     elements.mapImage.src = result.image_url;
     const detailWarnings = result.detail_warnings || mapDetailWarnings;
     const hasMarkers = (result.markers || []).some((marker) => marker.point_kind !== "local");
     const hasAnnotations = (result.annotations || []).length > 0;
-    elements.mapHint.textContent = detailWarnings.length
+    const mapHintText = detailWarnings.length
       ? `部分任务详情暂时未能读取，自动点位可能不完整：${detailWarnings.join("、")}`
       : hasMarkers
         ? "左键编号标记查看点位信息，右键切换到访勾选（勾显示在标记右下角）；右侧可隐藏单个点或查看全部说明图片。悬停撤离/转移标记可立即查看名称和楼层。"
@@ -4248,6 +4355,13 @@ async function loadMapView(requestedFloorKey = "") {
         : result.tasks.length
           ? "当前任务暂无可验证坐标；资料库提供点位后会自动标注。"
           : "加入或导入任务后，可在这里查看资料库中的自动点位。";
+    const unplacedCount = Number(result.unplaced_annotation_count || 0);
+    const mapBoundsWarning = unplacedCount > 0
+      ? currentLanguage === "en"
+        ? `${unplacedCount} map annotation(s) outside the basemap bounds were omitted.`
+        : `${unplacedCount} 个超出底图范围的地图标注已略过。`
+      : "";
+    elements.mapHint.textContent = [mapBoundsWarning, mapHintText].filter(Boolean).join(" ");
   } catch (error) {
     if (generation !== mapViewGeneration) return;
     mapView = null;
@@ -4259,6 +4373,7 @@ async function loadMapView(requestedFloorKey = "") {
     elements.mapPlaceholder.textContent = `地图载入失败：${error.message}`;
     elements.mapSummary.textContent = "未能载入地图数据。";
     elements.mapSourceLink.removeAttribute("href");
+    elements.mapArtworkAttribution.hidden = true;
   }
 }
 

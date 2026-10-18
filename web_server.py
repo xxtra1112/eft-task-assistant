@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import errno
 import ipaddress
 import json
@@ -32,15 +33,17 @@ import qrcode
 
 from catalog import (
     CatalogError,
-    fetch_eftarkov_catalog,
-    fetch_eftarkov_map_data,
-    fetch_eftarkov_map_floor_image,
-    fetch_eftarkov_map_index,
-    fetch_eftarkov_task_detail,
     is_key_item_name,
 )
 from diagnostics import configure_logging, log_event, log_path
+from point_images import supplement_verified_point_images
 from hideout_data import get_hideout_catalog
+from tarkov_dev_catalog import fetch_tarkov_dev_catalog, fetch_tarkov_dev_task_detail
+from tarkov_dev_maps import (
+    fetch_tarkov_dev_map_data,
+    fetch_tarkov_dev_map_floor_image,
+    fetch_tarkov_dev_map_index,
+)
 from players import (
     MOBILE_PAIRING_LIFETIME_SECONDS,
     SESSION_LIFETIME_SECONDS,
@@ -455,7 +458,7 @@ class AssistantState:
         self.selected_capture_id: str | None = None
         self.capture_records: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self.catalog_busy = False
-        self.catalog_status = "尚无任务目录；可手动同步 EFTarkov 公开资料。"
+        self.catalog_status = "尚无任务目录；可手动同步 Tarkov.dev JSON API 公开资料。"
         self.catalog_error = ""
         self.catalog_pending_captures: set[tuple[str, int]] = set()
         self._closed = False
@@ -843,11 +846,9 @@ class AssistantState:
             profile = next((item for item in self.profiles() if item.id == profile_id), None)
             if profile is None:
                 raise APIError("找不到当前游戏档案", 404)
-            if profile.game_mode == "pvp-season":
-                raise APIError("EFTarkov 当前没有独立赛季 PvP 目录；为避免套用常规 PvP 任务，已停止同步。", 409)
             game_mode = profile.game_mode
             self.catalog_busy = True
-            self.catalog_status = "正在读取允许访问的 EFTarkov 公开页面……"
+            self.catalog_status = "正在同步 Tarkov.dev JSON 任务资料……"
             self.catalog_error = ""
         log_event("catalog_sync_requested", game_mode=game_mode, profile_id=profile_id)
         self.catalog_executor.submit(self._refresh_catalog, game_mode, profile_id)
@@ -855,11 +856,10 @@ class AssistantState:
 
     def _refresh_catalog(self, game_mode: str, profile_id: int) -> None:
         try:
-            bundle = fetch_eftarkov_catalog(game_mode)
-            source_mode = "pve" if game_mode == "pve" else "pvp"
+            bundle = fetch_tarkov_dev_catalog(game_mode)
             snapshot_id = self.store.add_catalog_snapshot(
-                source="EFTarkov public task pages",
-                source_url=f"https://www.eftarkov.com/task?mode={source_mode}",
+                source="Tarkov.dev community JSON API",
+                source_url=f"https://json.tarkov.dev/{game_mode}/tasks",
                 game_mode=game_mode,
                 source_version=bundle.source_version or "unknown",
                 game_build=None,
@@ -870,8 +870,8 @@ class AssistantState:
             self.store.save_catalog_tasks(snapshot_id, bundle.tasks)
             with self.lock:
                 self.catalog_status = (
-                    f"同步完成：EFTarkov 标注 {bundle.source_version or '未知版本'}，"
-                    f"{len(bundle.tasks)} 条任务；游戏补丁覆盖待核实。"
+                    f"同步完成：Tarkov.dev 返回 {len(bundle.tasks)} 条任务；"
+                    f"来源未标注游戏补丁版本。"
                 )
                 self.catalog_error = ""
             log_event(
@@ -1189,13 +1189,19 @@ class AssistantState:
         return task
 
     def load_catalog_task_details(
-        self, snapshot_id: int, source_task_id: str, profile_id: int | None = None
+        self,
+        snapshot_id: int,
+        source_task_id: str,
+        profile_id: int | None = None,
+        force_refresh: bool = False,
     ) -> dict[str, Any]:
         task = self._catalog_task(snapshot_id, source_task_id, profile_id)
-        if task.get("details_loaded"):
-            return task
+        if task.get("details_loaded") and not force_refresh:
+            return {**task, "map_points": supplement_verified_point_images(
+                source_task_id, task.get("map_points", []), task["game_mode"],
+            )}
         try:
-            details = fetch_eftarkov_task_detail(source_task_id, task["game_mode"])
+            details = fetch_tarkov_dev_task_detail(source_task_id, task["game_mode"])
         except CatalogError as error:
             raise APIError(str(error), 502) from error
         self.store.update_catalog_task_details(
@@ -1209,7 +1215,9 @@ class AssistantState:
         updated = self.store.get_catalog_task(snapshot_id, source_task_id)
         if updated is None:
             raise APIError("任务资料读取后已不可用。", 404)
-        return updated
+        return {**updated, "map_points": supplement_verified_point_images(
+            source_task_id, updated.get("map_points", []), updated["game_mode"],
+        )}
 
     def import_catalog_task(
         self, snapshot_id: int, source_task_id: str, profile_id: int | None = None
@@ -1675,7 +1683,7 @@ class AssistantState:
         if profile is None:
             raise APIError("找不到当前游戏档案", 404)
         try:
-            return fetch_eftarkov_map_index(profile.game_mode)
+            return fetch_tarkov_dev_map_index(profile.game_mode)
         except CatalogError as error:
             raise APIError(str(error), 502) from error
 
@@ -1694,7 +1702,13 @@ class AssistantState:
             cached = self.store.get_catalog_task(snapshot_id, task.source_task_id)
             if cached is None:
                 continue
-            if not cached["details_loaded"]:
+            cached_points = cached.get("map_points", [])
+            has_legacy_map_points = any(
+                isinstance(point, dict) and point.get("source_provider") != "tarkov.dev"
+                for point in cached_points
+            )
+            needs_map_refresh = not cached["details_loaded"] or has_legacy_map_points
+            if needs_map_refresh:
                 failure_key = (snapshot_id, task.source_task_id)
                 with self.lock:
                     retry_after = self.map_detail_retry_after.get(failure_key, 0)
@@ -1702,7 +1716,11 @@ class AssistantState:
                     warnings.append(task.title)
                 else:
                     try:
-                        cached = self.load_catalog_task_details(snapshot_id, task.source_task_id)
+                        cached = self.load_catalog_task_details(
+                            snapshot_id,
+                            task.source_task_id,
+                            force_refresh=has_legacy_map_points,
+                        )
                         with self.lock:
                             self.map_detail_retry_after.pop(failure_key, None)
                     except Exception as error:
@@ -1718,7 +1736,11 @@ class AssistantState:
                             error=str(error),
                         )
                         continue
-            catalog_tasks[task.id] = cached
+            # Supplement existing cached details at read time; no resync, task
+            # progress writes or replacement of the Tarkov.dev coordinates.
+            catalog_tasks[task.id] = {**cached, "map_points": supplement_verified_point_images(
+                task.source_task_id, cached.get("map_points", []), game_mode,
+            )}
         return catalog_tasks, warnings
 
     def map_overview(self) -> dict[str, Any]:
@@ -1728,7 +1750,7 @@ class AssistantState:
         if profile is None:
             raise APIError("找不到当前游戏档案", 404)
         try:
-            maps = fetch_eftarkov_map_index(profile.game_mode)
+            maps = fetch_tarkov_dev_map_index(profile.game_mode)
         except CatalogError as error:
             raise APIError(str(error), 502) from error
         tasks = [task for task in self.store.list_tasks(profile_id) if task.state != "complete"]
@@ -1769,7 +1791,10 @@ class AssistantState:
         }
         for task in tasks:
             cached = catalog_tasks.get(task.id)
-            points = list(cached.get("map_points", [])) if cached else []
+            points = [
+                point for point in cached.get("map_points", [])
+                if isinstance(point, dict) and point.get("source_provider") == "tarkov.dev"
+            ] if cached else []
             for point in points:
                 map_id = str(point.get("map_id", "")).lower()
                 if map_id not in map_counts:
@@ -1846,30 +1871,26 @@ class AssistantState:
         if profile is None:
             raise APIError("找不到当前游戏档案", 404)
         try:
-            config = fetch_eftarkov_map_data(map_id, profile.game_mode)
+            config = fetch_tarkov_dev_map_data(map_id, profile.game_mode)
         except CatalogError as error:
             raise APIError(str(error), 502) from error
         tasks = [task for task in self.store.list_tasks(profile_id) if task.state != "complete"]
-        task_by_source_id = {
-            task.source_task_id.lower(): task
-            for task in tasks
-            if task.source_task_id
-        }
         catalog_tasks, detail_warnings = self._map_catalog_tasks(profile.game_mode, tasks)
         floor_keys = {item["key"] for item in config["floors"]}
-        map_markers_by_id = {marker["id"].lower(): marker for marker in config["markers"]}
         visited_marker_ids = self.store.list_map_marker_visits(profile_id, map_id)
-        task_points: list[tuple[Task, dict[str, Any], str]] = []
+        task_points: list[tuple[Task, dict[str, Any]]] = []
         for task in tasks:
             cached = catalog_tasks.get(task.id)
             if cached is None:
                 continue
             for point in cached.get("map_points", []):
+                if not isinstance(point, dict) or point.get("source_provider") != "tarkov.dev":
+                    continue
                 if str(point.get("map_id", "")).lower() == map_id:
-                    task_points.append((task, point, "objective"))
+                    task_points.append((task, point))
 
         point_counts: dict[str, int] = {}
-        for _, point, _ in task_points:
+        for _, point in task_points:
             point_floor = str(point.get("floor_key", ""))
             if point_floor in floor_keys:
                 point_counts[point_floor] = point_counts.get(point_floor, 0) + 1
@@ -1879,15 +1900,14 @@ class AssistantState:
         ]
         floor = next((item for item in config["floors"] if item["key"] == str(floor_key)), None)
         if floor is None:
-            floor = next((item for item in config["floors"] if item["key"] == "1"), None)
+            floor = next((item for item in config["floors"] if item.get("is_default")), None)
         if floor is None and config["floors"]:
             floor = config["floors"][0]
         if floor is None:
             raise APIError("该地图没有可显示的楼层底图。", 502)
 
         markers = []
-        linked_marker_ids: set[str] = set()
-        for task, point, point_kind in task_points:
+        for task, point in task_points:
             point_floor = next(
                 (item for item in config["floors"] if item["key"] == str(point.get("floor_key", ""))),
                 None,
@@ -1895,200 +1915,53 @@ class AssistantState:
             if point_floor is None:
                 continue
             try:
-                x = float(point["x"])
-                y = float(point["y"])
+                x_percent = float(point["x_percent"])
+                y_percent = float(point["y_percent"])
             except (KeyError, TypeError, ValueError):
                 continue
-            if not math.isfinite(x) or not math.isfinite(y):
+            if not math.isfinite(x_percent) or not math.isfinite(y_percent):
                 continue
             point_id = str(point.get("id", ""))
-            if point_id:
-                linked_marker_ids.add(point_id.lower())
-            source_marker = map_markers_by_id.get(point_id.lower(), {})
-            source_page_url = (
-                f"{config['source_url']}?marker={point_id}"
-                if point_id
-                else str(point.get("source_page_url", ""))
-            )
-            source_image_urls = _point_image_urls(
-                source_marker.get("info_image_urls"),
-                point.get("source_image_urls"),
-                source_marker.get("info_image_url"),
-                point.get("source_image_url"),
-                point.get("info_image_urls"),
-                point.get("image_urls"),
-                point.get("image_url"),
-            )
-            source_image_url = source_image_urls[0] if source_image_urls else ""
-            source_url = source_image_url or str(point.get("source_url", ""))
-            if not source_url:
-                source_url = source_page_url
-            key_name = str(point.get("key_name", ""))
-            acquisition = "; ".join(
-                " · ".join(
-                    part
-                    for part in (
-                        str(method.get("trader", "")).strip(),
-                        str(method.get("loyalty_level", "")).strip(),
-                        str(method.get("requirements", "")).strip(),
-                    )
-                    if part
-                )
-                for method in point.get("acquisition_methods", [])
-            )
-            api_marker_id = f"eftarkov-{point_id or len(markers)}"
+            api_marker_id = point_id
             markers.append(
                 {
                     "id": api_marker_id,
-                    "x_percent": x / point_floor["width"] * 100,
-                    "y_percent": y / point_floor["height"] * 100,
-                    "title": point.get("title") or (key_name if point_kind == "key-use" else task.title),
+                    "x_percent": x_percent,
+                    "y_percent": y_percent,
+                    "title": point.get("title") or task.title,
+                    "title_en": point.get("title_en") or point.get("title") or task.title,
                     "floor_key": point_floor["key"],
                     "floor_name": point_floor["name"],
-                    "description": (
-                        f"{key_name} 的用途位置（不是钥匙刷新点）"
-                        if point_kind == "key-use"
-                        else point.get("description", "")
-                    ),
-                    "task_id": task.id,
-                    "task_title": task.title,
-                    "point_kind": point_kind,
-                    "key_name": key_name,
-                    "key_acquisition": acquisition,
-                    "source_url": source_url,
-                    "source_image_url": source_image_url,
-                    "source_image_urls": source_image_urls,
-                    "source_page_url": source_page_url,
-                    "visited": api_marker_id in visited_marker_ids,
-                }
-            )
-        for marker in config["markers"]:
-            task = task_by_source_id.get(marker["task_id"])
-            point_floor = next(
-                (item for item in config["floors"] if item["key"] == marker["floor_key"]),
-                None,
-            )
-            if (
-                task is None
-                or point_floor is None
-                or marker["id"].lower() in linked_marker_ids
-            ):
-                continue
-            api_marker_id = f"eftarkov-{marker['id']}"
-            markers.append(
-                {
-                    "id": api_marker_id,
-                    "x_percent": marker["x"] / point_floor["width"] * 100,
-                    "y_percent": marker["y"] / point_floor["height"] * 100,
-                    "title": marker["title"] or task.title,
-                    "floor_key": point_floor["key"],
-                    "floor_name": point_floor["name"],
-                    "description": marker["description"],
+                    "floor_name_en": point.get("floor_name_en") or point_floor.get("name_en", point_floor["name"]),
+                    "description": point.get("description", ""),
                     "task_id": task.id,
                     "task_title": task.title,
                     "point_kind": "objective",
-                    "source_url": marker["info_image_url"] or f"{config['source_url']}?marker={marker['id']}",
-                    "source_image_url": marker["info_image_url"],
-                    "source_image_urls": marker["info_image_urls"],
-                    "source_page_url": f"{config['source_url']}?marker={marker['id']}",
+                    "source_url": point.get("source_url", config["source_url"]),
+                    "source_image_urls": point.get("source_image_urls", []),
+                    "source_image_page_url": point.get("source_image_page_url", ""),
+                    "source_image_provider": point.get("source_image_provider", ""),
+                    "source_image_marker_id": point.get("source_image_marker_id", ""),
+                    "source_image_reviewed_at": point.get("source_image_reviewed_at", ""),
+                    "source_page_url": point.get("source_page_url", config["source_url"]),
                     "visited": api_marker_id in visited_marker_ids,
                 }
             )
-        annotation_labels = {
-            "location": "地图地点",
-            "pmc-exit": "PMC撤离点",
-            "scav-exit": "SCAV撤离点",
-            "transfer": "转移点",
-        }
-        annotations_by_key: dict[tuple[Any, ...], dict[str, Any]] = {}
-        for source_marker in config["markers"]:
-            categories = _map_annotation_categories(source_marker)
-            if not categories or source_marker.get("display_title") is not True:
-                continue
-            source_marker_id = str(source_marker.get("id", "")).strip()
-            if not source_marker_id or source_marker_id.lower() in linked_marker_ids:
-                continue
-            point_floor = next(
-                (item for item in config["floors"] if item["key"] == str(source_marker.get("floor_key", ""))),
-                None,
-            )
-            if point_floor is None:
-                continue
-            try:
-                x = float(source_marker["x"])
-                y = float(source_marker["y"])
-            except (KeyError, TypeError, ValueError):
-                continue
-            if not math.isfinite(x) or not math.isfinite(y):
-                continue
-            title = str(source_marker.get("title", "")).strip()
-            if not title:
-                continue
-            source_page_url = f"{config['source_url']}?marker={source_marker_id}"
-            source_image_urls = _point_image_urls(
-                source_marker.get("info_image_urls"),
-                source_marker.get("info_image_url"),
-            )
-            icon_url = str(source_marker.get("icon_url", ""))
-            category = categories[0]
-            if category == "location":
-                annotation_key = (category, source_marker_id)
-            else:
-                annotation_key = (
-                    "exit",
-                    point_floor["key"],
-                    normalize_text(title),
-                    round(x, 1),
-                    round(y, 1),
-                )
-            annotation = annotations_by_key.get(annotation_key)
-            if annotation is None:
-                annotation = {
-                    "id": f"eftarkov-map-{source_marker_id}",
-                    "categories": [],
-                    "category_labels": {},
-                    "icon_urls": {},
-                    "title": title,
-                    "floor_key": point_floor["key"],
-                    "floor_name": point_floor["name"],
-                    "description": str(source_marker.get("description", "")),
-                    "x_percent": x / point_floor["width"] * 100,
-                    "y_percent": y / point_floor["height"] * 100,
-                    "source_url": source_page_url,
-                    "source_page_url": source_page_url,
-                    "source_page_urls": [],
-                    "source_image_urls": [],
-                    "display_title": source_marker.get("display_title") is True,
-                }
-                annotations_by_key[annotation_key] = annotation
-            if category not in annotation["categories"]:
-                annotation["categories"].append(category)
-                annotation["category_labels"][category] = annotation_labels[category]
-            if icon_url:
-                annotation["icon_urls"].setdefault(category, icon_url)
-            if source_page_url not in annotation["source_page_urls"]:
-                annotation["source_page_urls"].append(source_page_url)
-            for image_url in source_image_urls:
-                if image_url not in annotation["source_image_urls"]:
-                    annotation["source_image_urls"].append(image_url)
-            if category == "pmc-exit" and "scav-exit" in annotation["categories"]:
-                annotation["annotation_label"] = "PMC / SCAV撤离点"
-            elif category == "scav-exit" and "pmc-exit" in annotation["categories"]:
-                annotation["annotation_label"] = "PMC / SCAV撤离点"
-            else:
-                annotation["annotation_label"] = annotation_labels[category]
-        annotations = list(annotations_by_key.values())
-        for annotation in annotations:
-            annotation["categories"].sort(key=("pmc-exit", "scav-exit", "transfer", "location").index)
 
         return {
             "map_id": config["map_id"],
             "map_name": config["name"],
+            "map_name_en": config["name_en"],
+            "map_author": config["map_author"],
+            "map_author_url": config["map_author_url"],
+            "map_license": config["map_license"],
+            "map_license_url": config["map_license_url"],
             "floor": floor,
             "floors": floors,
             "image_url": f"/api/map/image?{urlencode({'map_id': config['map_id'], 'floor': floor['key']})}",
             "markers": markers,
-            "annotations": annotations,
+            "annotations": config["annotations"],
+            "unplaced_annotation_count": config.get("unplaced_annotation_count", 0),
             "detail_warnings": detail_warnings,
             "tasks": [
                 {"id": task.id, "title": task.title, "trader": task.trader}
@@ -2104,7 +1977,7 @@ class AssistantState:
         if profile is None:
             raise APIError("找不到当前游戏档案", 404)
         try:
-            return fetch_eftarkov_map_floor_image(map_id, floor_key, profile.game_mode)
+            return fetch_tarkov_dev_map_floor_image(map_id, floor_key, profile.game_mode)
         except CatalogError as error:
             log_event(
                 "map_floor_image_failed",
@@ -2127,9 +2000,15 @@ class AssistantState:
             and len(marker_suffix) == 24
             and set(marker_suffix.lower()) <= hex_chars
         )
+        tarkov_dev_suffix = marker_id.removeprefix("tarkovdev-")
+        is_tarkov_dev_marker = (
+            marker_id.startswith("tarkovdev-")
+            and len(tarkov_dev_suffix) == 24
+            and set(tarkov_dev_suffix.lower()) <= hex_chars
+        )
         if len(map_id) != 24 or not set(map_id) <= hex_chars:
             raise APIError("地图 ID 格式无效。")
-        if not is_eft_marker:
+        if not (is_eft_marker or is_tarkov_dev_marker):
             raise APIError("地图点位 ID 格式无效。")
         if not isinstance(visited, bool):
             raise APIError("到访状态必须是布尔值。")
@@ -2674,40 +2553,59 @@ def _make_handler(
     return Handler
 
 
+class _ApplicationHTTPServer(ThreadingHTTPServer):
+    # Windows SO_REUSEADDR can bind an existing listener and misdirect requests.
+    # Never let another app instance share either application's listening port.
+    allow_reuse_address = False
+
+    def server_bind(self) -> None:
+        if os.name == "nt" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
+def _port_unavailable(error: OSError) -> bool:
+    return error.errno == errno.EADDRINUSE or getattr(error, "winerror", None) in (10048, 10013)
+
+
 def _bind_server(
     state: PlayerStateManager,
     handler: type[BaseHTTPRequestHandler] | None = None,
+    *, port: int | None = None,
 ) -> ThreadingHTTPServer:
     request_handler = handler or _make_handler(state)
     last_error: OSError | None = None
     host = "127.0.0.1"
-    for port in range(8765, 8786):
+    for candidate_port in ([port] if port is not None else range(8765, 8786)):
         try:
-            server = ThreadingHTTPServer((host, port), request_handler)
+            server = _ApplicationHTTPServer((host, candidate_port), request_handler)
             server.daemon_threads = True
             return server
         except OSError as error:
-            if error.errno != errno.EADDRINUSE and getattr(error, "winerror", None) != 10048:
+            if not _port_unavailable(error):
                 raise
             last_error = error
-    raise RuntimeError(f"无法在 {host}:8765-8785 启动桌面本地服务：{last_error}")
+    ports = str(port) if port is not None else "8765-8785"
+    raise RuntimeError(f"无法在 {host}:{ports} 启动桌面本地服务：{last_error}")
 
 
 def _bind_mobile_server(
     handler: type[BaseHTTPRequestHandler],
+    *, port: int | None = None,
 ) -> ThreadingHTTPServer:
     last_error: OSError | None = None
     host = "0.0.0.0"
-    for port in range(8766, 8787):
+    for candidate_port in ([port] if port is not None else range(8766, 8787)):
         try:
-            server = ThreadingHTTPServer((host, port), handler)
+            server = _ApplicationHTTPServer((host, candidate_port), handler)
             server.daemon_threads = True
             return server
         except OSError as error:
-            if error.errno != errno.EADDRINUSE and getattr(error, "winerror", None) != 10048:
+            if not _port_unavailable(error):
                 raise
             last_error = error
-    raise RuntimeError(f"无法启动手机只读服务（{host}:8766-8786）：{last_error}")
+    ports = str(port) if port is not None else "8766-8786"
+    raise RuntimeError(f"无法启动手机只读服务（{host}:{ports}）：{last_error}")
 
 
 def _configure_console_encoding() -> None:
@@ -2716,14 +2614,36 @@ def _configure_console_encoding() -> None:
             stream.reconfigure(encoding="utf-8", errors="replace")
 
 
-def main() -> int:
+def _tcp_port(value: str) -> int:
+    try:
+        port = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("端口必须是 0-65535 的整数。") from error
+    if not 0 <= port <= 65535:
+        raise argparse.ArgumentTypeError("端口必须是 0-65535 的整数。")
+    return port
+
+
+def _startup_options(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="EFT Task Assistant local web app")
+    parser.add_argument("--port", type=_tcp_port, help="指定桌面回环服务端口（0 为自动分配）")
+    parser.add_argument("--mobile-port", type=_tcp_port, help="指定手机只读服务端口（0 为自动分配）")
+    parser.add_argument("--no-browser", action="store_true", help="不自动打开浏览器")
+    options = parser.parse_args(argv)
+    if options.port not in (None, 0) and options.port == options.mobile_port:
+        parser.error("桌面与手机服务不能使用同一个固定端口。")
+    return options
+
+
+def main(argv: list[str] | None = None) -> int:
+    options = _startup_options(argv)
     _configure_console_encoding()
     configure_logging()
     state = PlayerStateManager()
     mobile_access_info: dict[str, Any] = {}
     handler = _make_handler(state, mobile_access_info)
     try:
-        server = _bind_server(state, handler)
+        server = _bind_server(state, handler, port=options.port)
     except Exception:
         state.close()
         raise
@@ -2732,7 +2652,7 @@ def main() -> int:
     mobile_thread: threading.Thread | None = None
     try:
         mobile_handler = _make_handler(state, mobile_access_info, mobile_only=True)
-        mobile_server = _bind_mobile_server(mobile_handler)
+        mobile_server = _bind_mobile_server(mobile_handler, port=options.mobile_port)
         mobile_access_info.update(_mobile_lan_info(mobile_server))
         mobile_thread = threading.Thread(
             target=mobile_server.serve_forever,
@@ -2753,7 +2673,8 @@ def main() -> int:
         if not addresses:
             print("未检测到可用的局域网 IPv4 地址。", flush=True)
     print(f"诊断日志：{log_path()}", flush=True)
-    webbrowser.open(url, new=2)
+    if not options.no_browser:
+        webbrowser.open(url, new=2)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

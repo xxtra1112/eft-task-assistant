@@ -2,6 +2,7 @@ import io
 import json
 import threading
 from types import SimpleNamespace
+from pathlib import Path
 from urllib.error import HTTPError
 from urllib.robotparser import RobotFileParser
 
@@ -307,7 +308,9 @@ def test_metadata_timeout_still_returns_warned_cache(eft, source):
 def handler_for(assistant, mobile_only=True, mobile_session=True):
     player = SimpleNamespace(is_admin=True)
     manager = SimpleNamespace(
+        runtime_root=None,
         auth=SimpleNamespace(session_scope=lambda token: "mobile" if mobile_session else None,
+                             root=Path(__file__).resolve().parent / "synthetic-handler",
                              authenticate=lambda token: player),
         local_player=player, state_for=lambda selected: assistant)
     handler = object.__new__(_make_handler(manager, mobile_only=mobile_only))

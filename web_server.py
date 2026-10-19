@@ -2415,11 +2415,6 @@ def _make_handler(
     mobile_only: bool = False,
 ) -> type[BaseHTTPRequestHandler]:
     mobile_network = mobile_access_info if mobile_access_info is not None else {}
-    save_scope = "dataset-v1:" + json.dumps(
-        [str(state.runtime_root), state.auth.root.name] if state.runtime_root is not None
-        else [str(state.auth.root), "unmanaged"],
-        ensure_ascii=False, separators=(",", ":"),
-    )
     mobile_get_paths = {
         "/api/mobile/state",
         "/api/maps",
@@ -2562,6 +2557,11 @@ def _make_handler(
                 decoded = unquote(value, encoding="utf-8", errors="strict")
             except UnicodeDecodeError as error:
                 raise APIError(message, 409) from error
+            save_scope = "dataset-v1:" + json.dumps(
+                [str(state.runtime_root), state.auth.root.name] if state.runtime_root is not None
+                else [str(state.auth.root), "unmanaged"],
+                ensure_ascii=False, separators=(",", ":"),
+            )
             if decoded != save_scope:
                 raise APIError(message, 409)
 

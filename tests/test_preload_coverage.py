@@ -3,6 +3,7 @@ import io
 import socket
 import threading
 import time
+from urllib.robotparser import RobotFileParser
 
 import pytest
 from PIL import Image
@@ -38,6 +39,10 @@ def no_network(monkeypatch):
 
 @pytest.fixture
 def world(tmp_path, monkeypatch):
+    robots = RobotFileParser(catalog.EFTARKOV_ROOT + "/robots.txt")
+    robots.parse(["User-agent: *", "Allow: /map", "Allow: /assets/maps/", "Disallow: /"])
+    monkeypatch.setattr(catalog, "_robots_parser", lambda: robots)
+
     class World:
         def __init__(self):
             self.calls = []

@@ -90,35 +90,47 @@ class ReemrFetchError(CatalogError):
         self.status = status
 
 
-def access_denied(error: BaseException) -> bool:
+def _error_chain(error: BaseException):
     visited = set()
-    while error is not None and id(error) not in visited:
+    pending = [error]
+    while pending:
+        error = pending.pop()
+        if error is None or id(error) in visited:
+            continue
         visited.add(id(error))
-        message = str(error).casefold()
+        yield error
+        pending.extend((error.__cause__, error.__context__))
+        if isinstance(error, URLError) and isinstance(error.reason, BaseException):
+            pending.append(error.reason)
+
+
+def _network_error(error: BaseException) -> bool:
+    return ((isinstance(error, (ReemrNetworkError, TimeoutError, ConnectionError, URLError))
+             and not isinstance(error, HTTPError))
+            or (isinstance(error, OSError) and getattr(error, "errno", None) in {
+                errno.ETIMEDOUT, errno.EHOSTUNREACH, errno.ENETUNREACH, errno.ECONNRESET,
+                errno.ECONNABORTED, errno.ECONNREFUSED, errno.ENETDOWN,
+                10050, 10051, 10052, 10053, 10054, 10060, 10061, 10064, 10065}))
+
+
+def access_denied(error: BaseException) -> bool:
+    chain = tuple(_error_chain(error))
+    for error in chain:
         if (isinstance(error, (ReemrPolicyError, PermissionError))
                 or getattr(error, "asset_access_denied", False)
                 or (getattr(error, "status", None) or getattr(error, "code", None)) in {401, 403}
-                or re.search(r"\b(?:401|403)\b|robots|forbidden|policy|access denied|permission denied|unauthori[sz]ed|拒绝|禁止|不允许", message)):
+                or re.search(r"\b(?:401|403)\b", str(error))):
             return True
-        error = error.__cause__ or error.__context__
-    return False
+    if any(_network_error(error) for error in chain):
+        return False
+    return any(re.search(r"robots|forbidden|policy|access denied|permission denied|unauthori[sz]ed|拒绝|禁止|不允许",
+                         str(error).casefold()) for error in chain)
 
 
 def temporary_network_failure(error: BaseException) -> bool:
     if access_denied(error):
         return False
-    visited = set()
-    while error is not None and id(error) not in visited:
-        visited.add(id(error))
-        if isinstance(error, (ReemrNetworkError, TimeoutError, ConnectionError, URLError)) and not isinstance(error, HTTPError):
-            return True
-        if (isinstance(error, OSError) and getattr(error, "errno", None) in {
-                errno.ETIMEDOUT, errno.EHOSTUNREACH, errno.ENETUNREACH, errno.ECONNRESET,
-                errno.ECONNABORTED, errno.ECONNREFUSED, errno.ENETDOWN,
-                10050, 10051, 10052, 10053, 10054, 10060, 10061, 10064, 10065}):
-            return True
-        error = error.__cause__ or error.__context__
-    return False
+    return any(_network_error(error) for error in _error_chain(error))
 
 
 class _NoRedirect(HTTPRedirectHandler):

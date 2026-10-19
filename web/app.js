@@ -1344,10 +1344,14 @@ document.querySelector("#preferenceImportInput")?.addEventListener("change", asy
 window.addEventListener("online", () => preferenceSync?.retry(true));
 
 async function request(path, options = {}) {
+  const headers = { "Content-Type": "application/json",
+    ...(options.method && options.method !== "GET" && uiPreferenceDatasetScopeId
+      ? { "X-EFT-Save-Scope": encodeURIComponent(uiPreferenceDatasetScopeId) } : {}),
+    ...(options.headers || {}) };
   const response = await fetch(path, {
     cache: "no-store",
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
     ...options,
+    headers,
   });
   const contentType = response.headers.get("Content-Type") || "";
   const result = contentType.includes("application/json") ? await response.json() : null;
@@ -1359,9 +1363,10 @@ async function request(path, options = {}) {
   return result;
 }
 
-function post(path, payload = {}) {
+function post(path, payload = {}, datasetScopeId = uiPreferenceDatasetScopeId) {
   if (path === "/api/map/markers/visit") payload = { ...payload, source: mapView?.source_provider || state?.data_source || "tarkov.dev" };
-  return request(path, { method: "POST", body: JSON.stringify(payload) });
+  return request(path, { method: "POST", body: JSON.stringify(payload),
+    ...(datasetScopeId ? { headers: { "X-EFT-Save-Scope": encodeURIComponent(datasetScopeId) } } : {}) });
 }
 
 function setMobilePairingNotice(message, kind = "info") {
@@ -1604,12 +1609,14 @@ async function encodeScreenshotAsJpeg(file) {
 }
 
 async function uploadScreenshotFile(file) {
+  const datasetScopeId = uiPreferenceDatasetScopeId;
   const jpeg = await encodeScreenshotAsJpeg(file);
   const response = await fetch("/api/capture/upload?source=screenshot_folder", {
     method: "POST",
     cache: "no-store",
     credentials: "same-origin",
-    headers: { "Content-Type": "image/jpeg" },
+    headers: { "Content-Type": "image/jpeg",
+      ...(datasetScopeId ? { "X-EFT-Save-Scope": encodeURIComponent(datasetScopeId) } : {}) },
     body: jpeg,
   });
   const contentType = response.headers.get("Content-Type") || "";
@@ -4162,6 +4169,7 @@ async function flushRouteOperations() {
       || mapView?.reference_only || !["tarkov.dev", "eftarkov"].includes(state.data_source)) return;
   routeFlushRunning = true;
   const owner = uiPreferenceScopeId;
+  const datasetScopeId = uiPreferenceDatasetScopeId;
   try {
     while (owner === uiPreferenceScopeId && uiPreferences) {
       const blockedKeys = new Set(uiPreferences.routePendingOperations.filter(operation => operation.blocked).map(routeOperationKey));
@@ -4187,7 +4195,7 @@ async function flushRouteOperations() {
           continue;
         }
         const { base_signature, blocked, error, legacyKey, legacyFingerprint, ...payload } = operation;
-        const response = await post("/api/map/drawings", { ...payload, base_revision: snapshot.revision });
+        const response = await post("/api/map/drawings", { ...payload, base_revision: snapshot.revision }, datasetScopeId);
         if (owner !== uiPreferenceScopeId) break;
         cacheRouteResponse(response, key);
         uiPreferences.routePendingOperations = uiPreferences.routePendingOperations.filter(entry => entry.operation_id !== operation.operation_id);

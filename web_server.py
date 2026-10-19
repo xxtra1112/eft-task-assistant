@@ -25,7 +25,7 @@ from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.parse import parse_qs, unquote, urlencode, urlparse
 
 import cv2
 import numpy as np
@@ -2415,6 +2415,11 @@ def _make_handler(
     mobile_only: bool = False,
 ) -> type[BaseHTTPRequestHandler]:
     mobile_network = mobile_access_info if mobile_access_info is not None else {}
+    save_scope = "dataset-v1:" + json.dumps(
+        [str(state.runtime_root), state.auth.root.name] if state.runtime_root is not None
+        else [str(state.auth.root), "unmanaged"],
+        ensure_ascii=False, separators=(",", ":"),
+    )
     mobile_get_paths = {
         "/api/mobile/state",
         "/api/maps",
@@ -2542,6 +2547,23 @@ def _make_handler(
             host = self.headers.get("Host")
             if origin and host and urlparse(origin).netloc.casefold() != host.casefold():
                 raise APIError("跨站请求已拒绝。", 403)
+
+        def _enforce_save_scope(self) -> None:
+            values = self.headers.get_all("X-EFT-Save-Scope")
+            if values is None:
+                return
+            message = "存档目录或数据集已切换，或存档标识无效；请刷新页面后重试。"
+            if len(values) != 1:
+                raise APIError(message, 409)
+            value = values[0]
+            if len(value) > 16_384 or not value.isascii() or re.search(r"%(?![0-9a-fA-F]{2})", value):
+                raise APIError(message, 409)
+            try:
+                decoded = unquote(value, encoding="utf-8", errors="strict")
+            except UnicodeDecodeError as error:
+                raise APIError(message, 409) from error
+            if decoded != save_scope:
+                raise APIError(message, 409)
 
         def _read_json(self) -> dict[str, Any]:
             length_text = self.headers.get("Content-Length", "0")
@@ -2778,6 +2800,8 @@ def _make_handler(
                 if mobile_only and path not in {"/api/auth/mobile-pair", "/api/auth/logout"}:
                     raise APIError("局域网入口仅提供手机地图只读访问。", 403)
                 self._enforce_same_origin()
+                if not self._is_mobile_request():
+                    self._enforce_save_scope()
                 if path == "/api/capture/upload":
                     player = self._require_player()
                     assistant = state.state_for(player)

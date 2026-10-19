@@ -69,3 +69,4 @@ def test_verify_includes_dataset_and_history_ui_regressions():
     runs = "\n".join(step.get("run", "") for step in workflow()["jobs"]["verify"]["steps"])
     assert "node --test tests/test_ui_state.cjs" in runs
     assert "node --test tests/test_preference_sync.cjs" in runs
+    assert "node --test tests/test_save_scope_headers.cjs" in runs

@@ -73,6 +73,7 @@ jobs:
           node --test tests/test_preference_sync.cjs
           node --test tests/test_save_tools.cjs
           node --test tests/test_ui_state.cjs
+          node --test tests/test_save_scope_headers.cjs
 
   build:
     name: Build and verify Windows candidate

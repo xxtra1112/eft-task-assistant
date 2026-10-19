@@ -129,12 +129,13 @@
         (error.message || "连接失败") + " 未同步修改和原始备份仍在本浏览器。" );
     }
 
-    async function request(path, payload) {
+    async function request(path, payload, datasetScopeId = null) {
       const controller = new AbortController();
       const timer = schedule(() => controller.abort(), options.timeoutMs ?? 10000);
       try {
         const response = await transport(path, { cache: "no-store", credentials: "same-origin",
-          signal: controller.signal, ...(payload ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) } : {}) });
+          signal: controller.signal, ...(payload ? { method: "POST", headers: { "Content-Type": "application/json",
+            ...(datasetScopeId ? { "X-EFT-Save-Scope": encodeURIComponent(datasetScopeId) } : {}) }, body: JSON.stringify(payload) } : {}) });
         const result = await response.json();
         if (!response.ok) {
           const error = new Error(result?.error || `偏好请求失败（${response.status}）`);
@@ -192,7 +193,7 @@
         status(session, "saving", "正在同步偏好；待发送操作已保存在本浏览器。");
         let remote;
         try {
-          remote = snapshot(session, await request(pending.kind === "resolve" ? "/api/preferences/resolve" : "/api/preferences", pending.payload));
+          remote = snapshot(session, await request(pending.kind === "resolve" ? "/api/preferences/resolve" : "/api/preferences", pending.payload, session.datasetScopeId));
         } catch (error) {
           if (!sameDataset(session)) return;
           if (error.status !== 409 || !error.result?.conflict_id || !error.result?.current) throw error;

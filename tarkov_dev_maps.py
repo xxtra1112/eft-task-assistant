@@ -419,7 +419,7 @@ def _annotation_labels() -> dict[str, str]:
         "location": "地图地点",
         "pmc-exit": "PMC撤离点",
         "scav-exit": "SCAV撤离点",
-        "unknown-exit": "未分类撤离点",
+        "unknown-exit": "阵营未确认的撤离点",
         "transfer": "转移点",
     }
 
@@ -429,7 +429,7 @@ def _annotation_labels_en() -> dict[str, str]:
         "location": "Map location",
         "pmc-exit": "PMC extract",
         "scav-exit": "Scav extract",
-        "unknown-exit": "Unclassified extract",
+        "unknown-exit": "Faction unconfirmed extract",
         "transfer": "Transit point",
     }
 

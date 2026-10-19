@@ -50,6 +50,11 @@
   --mobile-shadow: var(--ui-shadow);
 }
 
+.mobile-source-notice { margin: 0; padding: 8px 14px 2px; color: var(--ui-text-muted); font-size: 11px; }
+.mobile-source-link { display: block; padding: 4px 14px 8px; color: var(--ui-accent); font-size: 11px; }
+.mobile-app.is-map-immersive .mobile-source-notice,
+.mobile-app.is-map-immersive .mobile-source-link { display: none; }
+
 :root[data-theme="light"] {
   color-scheme: light;
   --ui-page: #f5f5f7;
@@ -147,6 +152,10 @@ button { cursor: pointer; }
 .mobile-map-controls label { display: grid; width: 100%; min-width: 0; max-width: 100%; gap: 4px; color: var(--mobile-muted); font-size: 12px; }
 .mobile-map-controls select { width: 100%; min-width: 0; max-width: 100%; min-height: 44px; border: 1px solid var(--mobile-border-strong); border-radius: var(--ui-radius-control); padding: 5px 28px 5px 11px; background: var(--mobile-panel); color: var(--mobile-text); font-size: 14px; }
 .mobile-map-controls select:focus-visible { outline: 2px solid var(--mobile-focus); outline-offset: 2px; }
+.mobile-source-details { grid-column: 1 / -1; min-width: 0; color: var(--mobile-muted); font-size: 11px; }
+.mobile-source-details summary { min-height: 25px; padding: 3px 0; cursor: pointer; }
+.mobile-source-details .mobile-source-notice, .mobile-source-details .mobile-source-link { padding: 5px 0; }
+.mobile-annotation-options { display: grid; grid-column: 1 / -1; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 8px; }
 .floor-select-wrap { max-width: none; }
 .mobile-annotation-filters { display: grid; min-width: 0; grid-column: 1 / -1; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: center; gap: 4px 8px; border: 1px solid var(--mobile-border); border-radius: var(--ui-radius-card); padding: 5px 9px 8px; background: color-mix(in srgb, var(--mobile-panel) 76%, var(--mobile-raised)); }
 .mobile-annotation-filter-heading { display: flex; min-height: 34px; grid-column: 1 / -1; align-items: center; justify-content: space-between; padding: 0 2px; color: var(--mobile-subtle); cursor: pointer; list-style: none; -webkit-tap-highlight-color: transparent; }
@@ -181,6 +190,10 @@ button { cursor: pointer; }
 .mobile-map-canvas { position: absolute; top: 50%; left: 50%; width: 100%; height: auto; overflow: visible; transform: translate(-50%, -50%); transform-origin: center; }
 .mobile-map-canvas img { display: block; width: 100%; height: 100%; object-fit: fill; pointer-events: none; }
 .mobile-map-markers { position: absolute; inset: 0; pointer-events: none; }
+.mobile-map-drawings { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none; overflow: visible; }
+.mobile-map-markers { z-index: 2; }
+.mobile-route-status { position: absolute; z-index: 4; top: 8px; left: 10px; max-width: calc(100% - 68px); padding: 4px 7px; border-radius: 7px; color: var(--mobile-muted); background: var(--mobile-panel); font-size: 10px; pointer-events: none; }
+.mobile-route-status:empty { display: none; }
 .mobile-marker { position: absolute; display: block; width: 22px; height: 22px; transform: translate(-50%, -50%); border: 0; border-radius: 50%; padding: 0; background: transparent; color: #fff; pointer-events: auto; cursor: pointer; -webkit-tap-highlight-color: transparent; }
 .mobile-marker-face { position: absolute; inset: 4px; display: grid; place-items: center; border: 0; border-radius: 50%; padding: 0; background: color-mix(in srgb, var(--task-color, #5265aa) 88%, #16171a); color: #fff; font-size: 7px; font-weight: 800; line-height: 1; text-shadow: 0 1px 2px rgb(0 0 0 / 85%); box-shadow: none; transition: filter .14s ease; }
 .mobile-marker-face[data-shape="diamond"] { border-radius: 0; clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); }
@@ -315,3 +328,4 @@ button { cursor: pointer; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
 }
+.mobile-task-point-status { margin: 0 0 10px; padding: 8px 10px; border-radius: 8px; background: var(--ui-surface-raised); color: var(--mobile-muted); font-size: 12px; line-height: 1.5; }

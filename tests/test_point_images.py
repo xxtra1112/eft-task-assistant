@@ -128,12 +128,13 @@ def test_source_url_restrictions(url):
 
 def test_cached_details_are_enriched_on_read_without_database_update(monkeypatch, record):
     monkeypatch.setattr(photos, "_source_map", lambda *_: source_config(record))
-    cached = {"details_loaded": True, "game_mode": "pve", "map_points": [current_point(record)]}
+    cached = {"details_loaded": True, "game_mode": "pve", "data_provider": "tarkov.dev", "map_points": [current_point(record)]}
     state = object.__new__(web_server.AssistantState)
     monkeypatch.setattr(state, "_catalog_task", lambda *_: deepcopy(cached))
     state.store = SimpleNamespace(update_catalog_task_details=lambda *_: pytest.fail("Unexpected database write"))
     result = state.load_catalog_task_details(1, record["task_id"])
-    assert result["map_points"][0]["source_image_urls"]
+    assert result["map_points"][0]["source_image_urls"] == []
+    assert result["map_points"][0]["id"] == record["point_id"]
     assert not cached["map_points"][0]["source_image_urls"]
 
 
@@ -142,7 +143,7 @@ def test_map_selection_floor_changes_and_visits_keep_current_point_identity(monk
     point = photos.supplement_verified_point_images(record["task_id"], [current_point(record)])[0]
     other_map = "56f40101d2720b2a4d8b45d6"
     other_point = {**point, "id": "another-map-point", "map_id": other_map, "source_image_urls": []}
-    task = SimpleNamespace(id=1, title="Quest", trader="Trader", state="active")
+    task = SimpleNamespace(id=1, title="Quest", trader="Trader", state="active", source_task_id=record["task_id"])
     state = object.__new__(web_server.AssistantState)
     state.lock = threading.RLock();state.selected_profile_id = 1
     state.profiles = lambda: [SimpleNamespace(id=1, game_mode="pve")]
@@ -151,6 +152,10 @@ def test_map_selection_floor_changes_and_visits_keep_current_point_identity(monk
     state.store = SimpleNamespace(
         list_tasks=lambda _: [task], list_map_marker_visits=lambda *_: visits,
         set_map_marker_visited=lambda _p, _m, key, value: visits.add(key) if value else visits.discard(key),
+        latest_catalog_snapshot=lambda *_: {"id": 1},
+        get_catalog_task=lambda *_: {"map_points": [point, other_point]},
+        task_catalog_history=lambda *_: [{"map_points": [point, other_point]}],
+        task_data_provider=lambda *_: "tarkov.dev",
     )
     state._map_catalog_tasks = lambda *_: ({1: {"map_points": [point, other_point]}}, [])
     def config(map_id, _mode):
@@ -161,14 +166,16 @@ def test_map_selection_floor_changes_and_visits_keep_current_point_identity(monk
                        {"key": "Second_Floor", "name": "Upper"}],
             "annotations": [], "source_url": "https://tarkov.dev/map/factory-3d",
         }
-    monkeypatch.setattr(web_server, "fetch_tarkov_dev_map_data", config)
+    state.source_for_profile = lambda *_: "tarkov.dev"
+    state.sources = SimpleNamespace(map_data=lambda _source, map_id, mode: config(map_id, mode), warnings={})
     monkeypatch.setattr(web_server, "log_event", lambda *_a, **_k: None)
     ground = state.map_view(record["map_id"], "Ground_Floor")
     upper = state.map_view(record["map_id"], "Second_Floor")
     assert ground["markers"] == upper["markers"]  # Floor switches background, not task markers.
     assert len(ground["markers"]) == 1
     assert ground["markers"][0]["id"] == record["point_id"]
-    assert ground["markers"][0]["source_image_urls"] == list(record["image_urls"])
+    assert ground["markers"][0]["source_image_urls"] == []
+    assert ground["task_contexts"][0]["point_status"] == "matched"
     assert not ground["markers"][0]["visited"]
     state.set_map_marker_visited({"map_id": record["map_id"], "marker_id": record["point_id"], "visited": True})
     after = state.map_view(record["map_id"])["markers"][0]

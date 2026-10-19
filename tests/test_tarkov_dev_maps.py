@@ -174,7 +174,8 @@ def test_map_data_includes_localized_annotations_and_artwork_attribution(monkeyp
     assert extract["description_en"] == "Extract description"
     unknown_extract = next(item for item in annotations if "unknown-exit" in item["categories"])
     assert unknown_extract["title_en"] == "Other Extract"
-    assert unknown_extract["annotation_label_en"] == "Unclassified extract"
+    assert unknown_extract["annotation_label_en"] == "Faction unconfirmed extract"
+    assert unknown_extract["annotation_label"] == "阵营未确认的撤离点"
     transit = next(item for item in annotations if "transfer" in item["categories"])
     assert transit["title_en"] == "Transit description"
 

@@ -1,4 +1,7 @@
 const mobileElements = {
+  sourceNotice: document.querySelector("#mobileSourceNotice"),
+  sourceLink: document.querySelector("#mobileSourceLink"),
+  sourceLabel: document.querySelector("#mobileSourceLabel"),
   gate: document.querySelector("#mobileGate"),
   gateMessage: document.querySelector("#gateMessage"),
   gateRetry: document.querySelector("#gateRetryButton"),
@@ -13,6 +16,8 @@ const mobileElements = {
   canvas: document.querySelector("#mobileMapCanvas"),
   image: document.querySelector("#mobileMapImage"),
   markers: document.querySelector("#mobileMapMarkers"),
+  drawings: document.querySelector("#mobileMapDrawings"),
+  routeStatus: document.querySelector("#mobileRouteStatus"),
   mapLoading: document.querySelector("#mobileMapLoading"),
   mapError: document.querySelector("#mobileMapError"),
   zoomOut: document.querySelector("#mobileZoomOut"),
@@ -70,6 +75,8 @@ let mobilePanY = 0;
 let mobileMapDragging = null;
 let mobilePinchStart = null;
 const mobilePointers = new Map();
+let mobileRouteSnapshot = null;
+let mobileRouteReadPending = false;
 
 function detectMobileDeviceType() {
   const userAgent = navigator.userAgent || "";
@@ -145,7 +152,7 @@ function showMobileApp() {
 function mobileStorageKey() {
   const playerId = mobileState?.player?.id || "player";
   const profileId = mobileState?.selected_profile_id ?? "profile";
-  return `${MOBILE_STORAGE_PREFIX}${playerId}:${profileId}`;
+  return MOBILE_STORAGE_PREFIX + playerId + ":" + profileId + (mobileState?.data_source && mobileState.data_source !== "tarkov.dev" ? ":" + mobileState.data_source : "");
 }
 
 function readMobilePreferences() {
@@ -154,6 +161,7 @@ function readMobilePreferences() {
     if (!value || typeof value !== "object") return {};
     return {
       ...value,
+      annotationFiltersCollapsed: value.annotationFiltersCollapsed !== false,
       mapAnnotations: Object.fromEntries(Object.keys(MOBILE_ANNOTATION_DEFAULTS).map((key) => [
         key,
         typeof value.mapAnnotations?.[key] === "boolean"
@@ -188,7 +196,7 @@ function saveMobilePreferences() {
 function applyMobileAnnotationPreferences() {
   const preferences = readMobilePreferences();
   const annotations = preferences.mapAnnotations || MOBILE_ANNOTATION_DEFAULTS;
-  mobileElements.annotationFilters.open = preferences.annotationFiltersCollapsed !== true;
+  mobileElements.annotationFilters.open = preferences.annotationFiltersCollapsed === false;
   mobileElements.annotationFilters.querySelectorAll("input[data-map-annotation-filter]").forEach((input) => {
     input.checked = annotations[input.dataset.mapAnnotationFilter] !== false;
   });
@@ -242,6 +250,16 @@ function showMobileToast(message, kind = "info") {
 }
 
 function activeMobileTasks() {
+  if (String(mobileMapView?.map_id) === String(mobileSelectedMapId)
+      && Array.isArray(mobileMapView?.task_contexts)) {
+    const relevantIds = new Set(mobileMapView.task_contexts
+      .filter((context) => context.map_relevant !== false && context.point_status !== "other_map")
+      .map((context) => String(context.id)));
+    for (const marker of mobileMapView.markers || []) {
+      if (marker.task_id != null) relevantIds.add(String(marker.task_id));
+    }
+    return (mobileState?.tasks || []).filter((task) => task.state !== "complete" && relevantIds.has(String(task.id)));
+  }
   const mapTaskIds = selectedMobileMapTaskIds();
   return (mobileState?.tasks || []).filter((task) => (
     task.state !== "complete" && (!mapTaskIds || mapTaskIds.has(String(task.id)))
@@ -296,6 +314,14 @@ function renderMobileTasks() {
 
     const body = document.createElement("div");
     body.className = "mobile-task-body";
+    const context = (mobileMapView?.task_contexts || []).find((entry) => String(entry.id) === String(task.id));
+    card.dataset.pointStatus = context?.point_status || "matched";
+    if (context && context.point_status !== "matched" && context.point_message) {
+      const notice = document.createElement("p");
+      notice.className = "mobile-task-point-status";
+      notice.textContent = context.point_message;
+      body.append(notice);
+    }
     const requirements = Array.isArray(task.requirements) ? task.requirements : [];
     if (!requirements.length) {
       const empty = document.createElement("p");
@@ -383,10 +409,46 @@ function setMobileMapError(message) {
   mobileElements.mapError.hidden = !message;
 }
 
+async function syncMobileRoutes(force = false) {
+  if (mobileRouteReadPending || !mobileState || mobileElements.app.hidden || !mobileMapView?.floor?.key
+      || mobileMapView.reference_only || mobileMapView.reference_material || mobileMapView.source_provider !== mobileState.data_source) return;
+  const scope = { source: mobileState.data_source, map_id: mobileMapView.map_id, floor_key: String(mobileMapView.floor.key) };
+  const key = EftRouteTools.scopeKey(scope);
+  const generation = mobileMapLoadGeneration;
+  const profileId = mobileState.selected_profile_id;
+  const query = new URLSearchParams({ source: scope.source, map_id: scope.map_id, floor: scope.floor_key, profile_id: String(profileId) });
+  if (!force && mobileRouteSnapshot?.key === key) query.set("since", String(mobileRouteSnapshot.revision));
+  mobileRouteReadPending = true;
+  try {
+    const result = await mobileRequest(`/api/map/drawings?${query}`);
+    if (generation !== mobileMapLoadGeneration || profileId !== mobileState?.selected_profile_id || scope.source !== mobileState?.data_source) return;
+    const strokes = result.unchanged && mobileRouteSnapshot?.key === key
+      ? mobileRouteSnapshot.strokes : EftRouteTools.normalizeStrokes(result.strokes);
+    if (mobileRouteSnapshot?.key === key && Number(result.revision) < mobileRouteSnapshot.revision) return;
+    mobileRouteSnapshot = { key, revision: result.revision, strokes };
+    EftRouteTools.render(mobileElements.drawings, strokes);
+    mobileElements.drawings.dataset.revision = String(result.revision);
+    const legacy = Number(result.legacy_count || 0);
+    mobileElements.routeStatus.textContent = legacy
+      ? `${strokes.length} 条路线 · 另有 ${legacy} 条旧路线待电脑端确认楼层`
+      : strokes.length ? `${strokes.length} 条路线 · 只读同步` : "";
+  } catch (error) {
+    if (generation !== mobileMapLoadGeneration) return;
+    if (error.status === 401) handleMobileSessionError(error);
+    else mobileElements.routeStatus.textContent = mobileRouteSnapshot?.strokes?.length
+      ? "连接暂时中断 · 显示已缓存路线" : "路线暂时无法同步，恢复连接后自动重试";
+  } finally {
+    mobileRouteReadPending = false;
+  }
+}
+
 function sizeMobileMapCanvas() {
   const floor = mobileMapView?.floor;
   if (!floor || !Number(floor.width) || !Number(floor.height)) return;
-  const ratio = Number(floor.width) / Number(floor.height);
+  const loadedImage = mobileElements.image;
+  const ratio = loadedImage.complete && loadedImage.naturalWidth && loadedImage.naturalHeight
+    ? loadedImage.naturalWidth / loadedImage.naturalHeight
+    : Number(floor.width) / Number(floor.height);
   const viewportWidth = mobileElements.viewport.clientWidth;
   const viewportHeight = mobileElements.viewport.clientHeight;
   if (viewportWidth <= 0 || viewportHeight <= 0) return;
@@ -535,10 +597,28 @@ async function loadMobileMap(mapId, floorKey = "") {
   mobileElements.mapLoading.textContent = "正在载入地图…";
   mobileElements.mapLoading.hidden = false;
   mobileElements.image.hidden = true;
+  mobileElements.drawings.replaceChildren();
+  mobileRouteSnapshot = null;
+  mobileElements.routeStatus.textContent = "";
   try {
     const result = await mobileRequest(mobileMapRequestUrl(mapId, floorKey));
     if (generation !== mobileMapLoadGeneration) return;
     mobileMapView = result;
+    renderMobileTasks();
+    syncMobileRoutes();
+    mobileElements.sourceNotice.textContent = [result.source_label + " · 电脑端切换来源", result.source_notice, result.cache_warning].filter(Boolean).join(" ");
+    mobileElements.sourceLink.href = result.source_url;
+    mobileElements.sourceLink.textContent = (result.source_label || "地图") + " 来源 · " + (result.map_license || "详见来源页");
+    mobileElements.sourceLabel.textContent = (result.source_label || "地图") + " · 来源与许可";
+    if (result.reference_only || result.reference_material) {
+      mobileElements.image.removeAttribute("src");
+      mobileElements.image.hidden = true;
+      mobileElements.markers.replaceChildren();
+      renderMobileFloorOptions([], "");
+      mobileElements.mapLoading.hidden = true;
+      setMobileMapError("RE3MR 高清原图仅在桌面本机显示，未启用局域网再托管。可手动打开来源网站；没有校准坐标，不叠加其他来源点位。");
+      return;
+    }
     mobileMapBaseWidth = 0;
     mobileMapBaseHeight = 0;
     renderMobileFloorOptions(result.floors, result.floor?.key);
@@ -550,7 +630,7 @@ async function loadMobileMap(mapId, floorKey = "") {
         mapId: mobileSelectedMapId,
         floors: preferences.floors,
         mapAnnotations: preferences.mapAnnotations || MOBILE_ANNOTATION_DEFAULTS,
-        annotationFiltersCollapsed: preferences.annotationFiltersCollapsed === true,
+        annotationFiltersCollapsed: preferences.annotationFiltersCollapsed !== false,
         taskPanelHeightRatio: preferences.taskPanelHeightRatio ?? null,
       }));
     } catch {
@@ -560,6 +640,10 @@ async function loadMobileMap(mapId, floorKey = "") {
     renderMobileMarkers();
     mobileElements.image.onload = () => {
       if (generation !== mobileMapLoadGeneration) return;
+      if (result.reference_material && mobileElements.image.naturalWidth && mobileElements.image.naturalHeight) {
+        result.floor.width = mobileElements.image.naturalWidth;
+        result.floor.height = mobileElements.image.naturalHeight;
+      }
       mobileElements.image.hidden = false;
       mobileElements.mapLoading.hidden = true;
       sizeMobileMapCanvas();
@@ -609,7 +693,8 @@ async function loadMobileMapIndex() {
 
 async function loadMobileState() {
   const next = await mobileRequest("/api/mobile/state");
-  const profileChanged = mobileState && mobileState.selected_profile_id !== next.selected_profile_id;
+  const profileChanged = mobileState && (mobileState.selected_profile_id !== next.selected_profile_id || mobileState.data_source !== next.data_source);
+  const previousRevision = mobileState?.map_data_revision;
   const previousActiveIds = activeMobileTasks().map((task) => String(task.id)).join(",");
   mobileState = next;
   applyMobileAnnotationPreferences();
@@ -620,12 +705,14 @@ async function loadMobileState() {
   if (profileChanged) {
     mobileMapList = [];
     mobileMapView = null;
+    mobileRouteSnapshot = null;
+    mobileElements.drawings.replaceChildren();
     mobileSelectedMapId = "";
     await loadMobileMapIndex();
     return next;
   }
   const nextActiveIds = activeMobileTasks().map((task) => String(task.id)).join(",");
-  if (mobileMapView && previousActiveIds !== nextActiveIds) {
+  if (mobileMapView && (previousActiveIds !== nextActiveIds || previousRevision !== next.map_data_revision)) {
     await loadMobileMap(mobileSelectedMapId, mobileElements.floorSelect.value);
   }
   return next;
@@ -697,10 +784,8 @@ function safeMobilePointImageUrl(value) {
     const url = new URL(value, "https://assets.tarkov.dev");
     const approvedAsset = url.hostname === "assets.tarkov.dev"
       && /^\/(?:[A-Za-z0-9._/-]+)\.(?:webp|png|jpe?g)$/i.test(url.pathname);
-    const approvedPointPhoto = url.hostname === "www.eftarkov.com"
-      && /^\/uploads\/infoImg\/[A-Za-z0-9_-]+\.(?:webp|png|jpe?g)$/i.test(url.pathname);
     if (url.protocol !== "https:" || url.username || url.password || url.port
-      || url.search || url.hash || !(approvedAsset || approvedPointPhoto)
+      || url.search || url.hash || !approvedAsset
       || url.pathname.split("/").includes("..")) return "";
     return url.href;
   } catch {
@@ -799,7 +884,7 @@ mobileElements.floorSelect.addEventListener("change", () => {
       mapId: mobileSelectedMapId,
       floors: preferences.floors,
       mapAnnotations: preferences.mapAnnotations || MOBILE_ANNOTATION_DEFAULTS,
-      annotationFiltersCollapsed: preferences.annotationFiltersCollapsed === true,
+      annotationFiltersCollapsed: preferences.annotationFiltersCollapsed !== false,
       taskPanelHeightRatio: preferences.taskPanelHeightRatio ?? null,
     }));
   } catch {
@@ -850,6 +935,8 @@ mobileElements.logout.addEventListener("click", async () => {
     mobileMapList = [];
     mobileMapView = null;
     mobileSelectedMapId = "";
+    mobileRouteSnapshot = null;
+    mobileElements.drawings.replaceChildren();
     showMobileGate("手机访问已结束。再次使用时，请扫描电脑端二维码。", true);
   } catch (error) {
     showMobileToast(error.message, "error");
@@ -964,7 +1051,12 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden && mobileState) {
     loadMobileState().catch(handleMobileSessionError);
     if (mobileSelectedMapId) loadMobileMap(mobileSelectedMapId, mobileElements.floorSelect.value);
+    syncMobileRoutes(true);
   }
 });
 
 initializeMobileSession();
+setInterval(() => { if (!document.hidden) syncMobileRoutes(); }, 2000);
+window.addEventListener("online", () => {
+  if (mobileState) loadMobileState().then(() => syncMobileRoutes(true)).catch(handleMobileSessionError);
+});

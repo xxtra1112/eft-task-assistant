@@ -2,19 +2,19 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
+
+from app_paths import diagnostic_log_path
 
 
 LOGGER_NAME = "eft_task_assistant"
 
 
 def log_path() -> Path:
-    local_app_data = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
-    return local_app_data / "EFTTaskAssistant" / "logs" / "app.log"
+    return diagnostic_log_path()
 
 
 def configure_logging() -> Path:

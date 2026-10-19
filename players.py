@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
-from storage import default_database_path
+from app_paths import SUPPORTED_SCHEMA_VERSION, check_database_schema, current_paths
 
 
 SESSION_LIFETIME_SECONDS = 30 * 24 * 60 * 60
@@ -28,13 +28,15 @@ class Player:
 
 class PlayerAuthStore:
     def __init__(self, root: Path | None = None) -> None:
-        self.root = root or default_database_path().parent
-        self.root.mkdir(parents=True, exist_ok=True)
+        self.root = Path(root) if root is not None else current_paths().data_dir
         self.path = self.root / "players.sqlite3"
+        check_database_schema(self.path)
+        self.root.mkdir(parents=True, exist_ok=True)
         self._initialize()
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
+        check_database_schema(self.path)
         connection = sqlite3.connect(self.path, timeout=10)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
@@ -95,6 +97,7 @@ class PlayerAuthStore:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS mobile_pairing_expiry_idx ON mobile_pairing_tokens(expires_at)"
             )
+            connection.execute("PRAGMA user_version=" + str(SUPPORTED_SCHEMA_VERSION))
 
     @staticmethod
     def _token_hash(token: str) -> str:
@@ -268,7 +271,7 @@ class PlayerAuthStore:
 
     def database_path(self, player: Player) -> Path:
         if player.is_admin:
-            return self.root / default_database_path().name
+            return self.root / "tasks.sqlite3"
         player_directory = self.root / "players"
         player_directory.mkdir(parents=True, exist_ok=True)
         return player_directory / f"{player.id}.sqlite3"

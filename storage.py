@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import sqlite3
 from contextlib import contextmanager
@@ -11,9 +10,22 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from task_requirements import normalize_requirement
+from route_storage import MapDrawingStore
+from app_paths import SUPPORTED_SCHEMA_VERSION, check_database_schema, current_paths
+from app_paths import default_database_path as managed_database_path
 
 
 GAME_MODES = {"pve", "regular", "pvp-season"}
+CATALOG_PROVIDERS = {"Tarkov.dev community JSON API": "tarkov.dev", "eftarkov.com": "eftarkov"}
+
+
+def catalog_data_provider(source: str, metadata: dict[str, Any]) -> str:
+    provider = metadata.get("provider")
+    if provider is not None:
+        return provider if isinstance(provider, str) and provider in {"tarkov.dev", "eftarkov"} else ""
+    return CATALOG_PROVIDERS.get(source, "")
+
+
 MP133_GUNSMITH_TASK_ID = "5ac23c6186f7741247042bad"
 MP133_GUNSMITH_REQUIREMENTS = (
     "改装配件颜色符合任务要求",
@@ -52,8 +64,7 @@ def _now() -> str:
 
 
 def default_database_path() -> Path:
-    local_app_data = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
-    return local_app_data / "EFTTaskAssistant" / "tasks.sqlite3"
+    return managed_database_path()
 
 
 def normalize_text(value: str) -> str:
@@ -91,13 +102,30 @@ def _json_value(value: Any) -> str:
 
 class TaskStore:
     def __init__(self, path: Path | None = None) -> None:
-        self.path = path or default_database_path()
+        self.path = Path(path) if path is not None else current_paths().tasks_database
+        check_database_schema(self.path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
+        self.routes = MapDrawingStore(self._connect)
+        self._migrate_source_visits()
         self._restore_tasks_completed_by_screenshot()
+
+    def _migrate_source_visits(self) -> None:
+        # Copy, never rewrite legacy rows. The one-time ledger makes unvisiting
+        # persistent; reopening must not resurrect a legacy visit.
+        with self._connect() as connection:
+            connection.execute("CREATE TABLE IF NOT EXISTS source_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)")
+            if connection.execute("SELECT 1 FROM source_migrations WHERE name = 'map-visits-v1'").fetchone():
+                return
+            for prefix, provider in (("tarkovdev-", "tarkov.dev"), ("eftarkov-", "eftarkov")):
+                connection.execute("""INSERT OR IGNORE INTO map_marker_visits (profile_id, map_id, marker_id, visited_at)
+                    SELECT profile_id, ? || ':' || map_id, marker_id, visited_at FROM map_marker_visits
+                    WHERE instr(map_id, ':') = 0 AND marker_id LIKE ?""", (provider, prefix + "%"))
+            connection.execute("INSERT INTO source_migrations VALUES ('map-visits-v1', ?)", (_now(),))
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
+        check_database_schema(self.path)
         connection = sqlite3.connect(self.path)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
@@ -134,7 +162,74 @@ class TaskStore:
             self._ensure_task_source_columns(connection)
             self._ensure_task_requirement_columns(connection)
             self._ensure_catalog_task_columns(connection)
+            self._ensure_task_provenance(connection)
+            connection.execute("PRAGMA user_version=" + str(SUPPORTED_SCHEMA_VERSION))
             connection.execute("PRAGMA foreign_keys = ON")
+
+    @staticmethod
+    def _ensure_task_provenance(connection: sqlite3.Connection) -> None:
+        connection.execute("""CREATE TABLE IF NOT EXISTS task_data_provenance (
+            task_id INTEGER PRIMARY KEY, provider TEXT NOT NULL,
+            snapshot_id INTEGER, evidence TEXT NOT NULL)""")
+        rows = connection.execute("""SELECT t.id, t.source_task_id, p.game_mode
+            FROM tasks t JOIN profiles p ON p.id=t.profile_id
+            LEFT JOIN task_data_provenance d ON d.task_id=t.id
+            WHERE d.task_id IS NULL AND t.source_task_id!=''""").fetchall()
+        for task in rows:
+            candidates = connection.execute("""SELECT cs.id, cs.source, cs.metadata_json
+                FROM catalog_tasks ct JOIN catalog_snapshots cs ON cs.id=ct.snapshot_id
+                WHERE ct.source_task_id=? AND cs.game_mode=? ORDER BY cs.id DESC""",
+                (task["source_task_id"], task["game_mode"])).fetchall()
+            origins = {}
+            for candidate in candidates:
+                provider = catalog_data_provider(candidate["source"], json.loads(candidate["metadata_json"] or "{}"))
+                if provider:
+                    origins.setdefault(provider, candidate["id"])
+            if len(origins) == 1:
+                provider, snapshot = next(iter(origins.items()))
+                connection.execute("INSERT INTO task_data_provenance VALUES (?,?,?,?)",
+                    (task["id"], provider, snapshot, "exact task ID and mode; sole catalog provider"))
+
+    def task_data_provider(self, task_id: int) -> str:
+        with self._connect() as connection:
+            self._ensure_task_provenance(connection)
+            row = connection.execute("SELECT provider FROM task_data_provenance WHERE task_id=?", (task_id,)).fetchone()
+        return str(row["provider"]) if row else ""
+
+    def task_catalog_history(self, task_id: int) -> list[dict[str, Any]]:
+        provider = self.task_data_provider(task_id)
+        if not provider:
+            return []
+        clause, parameters = self._catalog_source_clause(provider)
+        with self._connect() as connection:
+            task = connection.execute("""SELECT t.source_task_id, p.game_mode, d.snapshot_id
+                FROM tasks t JOIN profiles p ON p.id=t.profile_id
+                JOIN task_data_provenance d ON d.task_id=t.id WHERE t.id=?""", (task_id,)).fetchone()
+            if task is None:
+                return []
+            snapshots = connection.execute(
+                "SELECT id FROM catalog_snapshots WHERE game_mode=?" + clause +
+                " ORDER BY (id=?) DESC, id DESC", (task["game_mode"], *parameters, task["snapshot_id"]),
+            ).fetchall()
+        return [entry for snapshot in snapshots
+                if (entry := self.get_catalog_task(snapshot["id"], task["source_task_id"])) is not None]
+
+    def record_task_data_provider(self, task_id: int, provider: str, snapshot_id: int) -> None:
+        if provider not in {"tarkov.dev", "eftarkov"}:
+            raise ValueError("未知任务资料来源。")
+        with self._connect() as connection:
+            task = connection.execute("""SELECT t.source_task_id, p.game_mode FROM tasks t
+                JOIN profiles p ON p.id=t.profile_id WHERE t.id=?""", (task_id,)).fetchone()
+            snapshot = connection.execute("SELECT source, metadata_json, game_mode FROM catalog_snapshots WHERE id=?", (snapshot_id,)).fetchone()
+            canonical = connection.execute("SELECT 1 FROM catalog_tasks WHERE snapshot_id=? AND source_task_id=?",
+                                           (snapshot_id, task["source_task_id"] if task else "")).fetchone()
+            if (not task or not snapshot or not canonical or task["game_mode"] != snapshot["game_mode"]
+                    or catalog_data_provider(snapshot["source"], json.loads(snapshot["metadata_json"] or "{}")) != provider):
+                raise ValueError("任务来源必须与稳定任务 ID、模式和目录一致。")
+            connection.execute("""INSERT INTO task_data_provenance VALUES (?,?,?,?)
+                ON CONFLICT(task_id) DO UPDATE SET provider=excluded.provider,
+                snapshot_id=excluded.snapshot_id,evidence=excluded.evidence""",
+                (task_id, provider, snapshot_id, "explicit catalog import"))
 
     def _restore_tasks_completed_by_screenshot(self) -> None:
         now = _now()
@@ -373,6 +468,7 @@ class TaskStore:
         definitions = {
             "key_requirements_json": "TEXT NOT NULL DEFAULT '[]'",
             "map_points_json": "TEXT NOT NULL DEFAULT '[]'",
+            "map_ids_json": "TEXT NOT NULL DEFAULT '[]'",
             "details_loaded": "INTEGER NOT NULL DEFAULT 0",
         }
         for name, definition in definitions.items():
@@ -1199,8 +1295,8 @@ class TaskStore:
                     INSERT INTO catalog_tasks (
                         snapshot_id, source_task_id, trader, title, source_url,
                         objectives_json, prerequisites_json, key_requirements_json,
-                        map_points_json, details_loaded
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        map_points_json, details_loaded, map_ids_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT (snapshot_id, source_task_id) DO UPDATE SET
                         trader = excluded.trader,
                         title = excluded.title,
@@ -1209,7 +1305,8 @@ class TaskStore:
                         prerequisites_json = excluded.prerequisites_json,
                         key_requirements_json = excluded.key_requirements_json,
                         map_points_json = excluded.map_points_json,
-                        details_loaded = excluded.details_loaded
+                        details_loaded = excluded.details_loaded,
+                        map_ids_json = excluded.map_ids_json
                     """,
                     (
                         snapshot_id,
@@ -1222,6 +1319,7 @@ class TaskStore:
                         _json_value(task.get("key_requirements", [])),
                         _json_value(task.get("map_points", [])),
                         int(bool(task.get("details_loaded", False))),
+                        _json_value(task.get("map_ids", [])),
                     ),
                 )
 
@@ -1255,11 +1353,13 @@ class TaskStore:
                 ).fetchall()
 
             snapshot_data = []
+            source_columns = {row[1] for row in source_connection.execute("PRAGMA table_info(catalog_tasks)").fetchall()}
             for snapshot in source_snapshots:
                 tasks = source_connection.execute(
                     """
                     SELECT source_task_id, trader, title, source_url, objectives_json,
-                           prerequisites_json, key_requirements_json, map_points_json, details_loaded
+                           prerequisites_json, key_requirements_json, map_points_json, details_loaded,
+                    """ + ("map_ids_json" if "map_ids_json" in source_columns else "'[]' AS map_ids_json") + """
                     FROM catalog_tasks WHERE snapshot_id = ? ORDER BY source_task_id
                     """,
                     (snapshot["id"],),
@@ -1316,8 +1416,8 @@ class TaskStore:
                     INSERT INTO catalog_tasks (
                         snapshot_id, source_task_id, trader, title, source_url,
                         objectives_json, prerequisites_json, key_requirements_json,
-                        map_points_json, details_loaded
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        map_points_json, details_loaded, map_ids_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     [
                         (
@@ -1331,6 +1431,7 @@ class TaskStore:
                             task["key_requirements_json"],
                             task["map_points_json"],
                             task["details_loaded"],
+                            task["map_ids_json"],
                         )
                         for task in tasks
                     ],
@@ -1345,11 +1446,23 @@ class TaskStore:
                 )
         return imported
 
-    def latest_catalog_snapshot(self, game_mode: str) -> dict[str, Any] | None:
+    @staticmethod
+    def _catalog_source_clause(provider: str | None) -> tuple[str, tuple[str, ...]]:
+        if provider is None:
+            return "", ()
+        if provider in {"tarkov.dev", "eftarkov"}:
+            return """ AND (CASE WHEN json_extract(metadata_json, '$.provider') IS NOT NULL
+                THEN json_extract(metadata_json, '$.provider')
+                WHEN source = 'Tarkov.dev community JSON API' THEN 'tarkov.dev'
+                WHEN source = 'eftarkov.com' THEN 'eftarkov' ELSE '' END) = ?""", (provider,)
+        return " AND 0", ()
+
+    def latest_catalog_snapshot(self, game_mode: str, provider: str | None = None) -> dict[str, Any] | None:
+        clause, parameters = self._catalog_source_clause(provider)
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT * FROM catalog_snapshots WHERE game_mode = ? ORDER BY id DESC LIMIT 1",
-                (game_mode,),
+                "SELECT * FROM catalog_snapshots WHERE game_mode = ?" + clause + " ORDER BY id DESC LIMIT 1",
+                (game_mode, *parameters),
             ).fetchone()
             if row is None:
                 return None
@@ -1362,25 +1475,25 @@ class TaskStore:
         return result
 
     def search_catalog_tasks(
-        self, game_mode: str, query: str = "", trader: str = "", limit: int = 60
+        self, game_mode: str, query: str = "", trader: str = "", limit: int = 60, provider: str | None = None
     ) -> list[dict[str, Any]]:
         query = query.strip()
         trader = trader.strip()
         limit = max(1, min(int(limit), 200))
+        snapshot = self.latest_catalog_snapshot(game_mode, provider)
+        if snapshot is None:
+            return []
         with self._connect() as connection:
             rows = connection.execute(
                 """
                 SELECT ct.snapshot_id, ct.source_task_id, ct.trader, ct.title, ct.source_url,
                        ct.objectives_json, ct.prerequisites_json, ct.key_requirements_json,
-                       ct.map_points_json, ct.details_loaded, cs.source_version,
+                       ct.map_points_json, ct.map_ids_json, ct.details_loaded, cs.source_version,
                        cs.verification_status
                 FROM catalog_tasks AS ct
                 JOIN catalog_snapshots AS cs ON cs.id = ct.snapshot_id
                 WHERE cs.game_mode = ?
-                  AND cs.id = (
-                      SELECT id FROM catalog_snapshots
-                      WHERE game_mode = ? ORDER BY id DESC LIMIT 1
-                  )
+                  AND cs.id = ?
                   AND (? = '' OR ct.title LIKE ? OR ct.trader LIKE ?)
                   AND (? = '' OR ct.trader = ?)
                 ORDER BY ct.trader, ct.title
@@ -1388,7 +1501,7 @@ class TaskStore:
                 """,
                 (
                     game_mode,
-                    game_mode,
+                    snapshot["id"],
                     query,
                     f"%{query}%",
                     f"%{query}%",
@@ -1404,6 +1517,7 @@ class TaskStore:
             item["prerequisites"] = json.loads(item.pop("prerequisites_json") or "[]")
             item["key_requirements"] = json.loads(item.pop("key_requirements_json") or "[]")
             item["map_points"] = json.loads(item.pop("map_points_json") or "[]")
+            item["map_ids"] = json.loads(item.pop("map_ids_json") or "[]")
             item["details_loaded"] = bool(item.get("details_loaded"))
             results.append(item)
         return results
@@ -1414,8 +1528,9 @@ class TaskStore:
                 """
                 SELECT ct.snapshot_id, ct.source_task_id, ct.trader, ct.title, ct.source_url,
                        ct.objectives_json, ct.prerequisites_json, ct.key_requirements_json,
-                       ct.map_points_json, ct.details_loaded, cs.game_mode,
-                       cs.source_version, cs.verification_status
+                       ct.map_points_json, ct.map_ids_json, ct.details_loaded, cs.game_mode,
+                       cs.source_version, cs.verification_status, cs.source_url AS catalog_source_url,
+                       cs.source AS catalog_source, cs.metadata_json AS catalog_metadata_json
                 FROM catalog_tasks AS ct
                 JOIN catalog_snapshots AS cs ON cs.id = ct.snapshot_id
                 WHERE ct.snapshot_id = ? AND ct.source_task_id = ?
@@ -1425,10 +1540,12 @@ class TaskStore:
         if row is None:
             return None
         result = dict(row)
+        result["data_provider"] = catalog_data_provider(result.pop("catalog_source"), json.loads(result.pop("catalog_metadata_json") or "{}"))
         result["objectives"] = json.loads(result.pop("objectives_json") or "[]")
         result["prerequisites"] = json.loads(result.pop("prerequisites_json") or "[]")
         result["key_requirements"] = json.loads(result.pop("key_requirements_json") or "[]")
         result["map_points"] = json.loads(result.pop("map_points_json") or "[]")
+        result["map_ids"] = json.loads(result.pop("map_ids_json") or "[]")
         result["details_loaded"] = bool(result.get("details_loaded"))
         return result
 
@@ -1440,13 +1557,14 @@ class TaskStore:
         prerequisites: list[dict[str, Any]] | None = None,
         key_requirements: list[dict[str, Any]] | None = None,
         map_points: list[dict[str, Any]] | None = None,
+        map_ids: list[str] | None = None,
     ) -> None:
         with self._connect() as connection:
             cursor = connection.execute(
                 """
                 UPDATE catalog_tasks
                 SET objectives_json = ?, prerequisites_json = ?, key_requirements_json = ?,
-                    map_points_json = ?, details_loaded = 1
+                    map_points_json = ?, map_ids_json = COALESCE(?, map_ids_json), details_loaded = 1
                 WHERE snapshot_id = ? AND source_task_id = ?
                 """,
                 (
@@ -1454,6 +1572,7 @@ class TaskStore:
                     _json_value(prerequisites or []),
                     _json_value(key_requirements or []),
                     _json_value(map_points or []),
+                    _json_value(map_ids) if map_ids is not None else None,
                     snapshot_id,
                     source_task_id,
                 ),

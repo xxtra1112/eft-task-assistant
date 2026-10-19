@@ -114,7 +114,7 @@
           </form>
         </details>
         <details id="catalogPanel" class="catalog-details">
-          <summary>从 Tarkov.dev JSON API 导入任务</summary>
+          <summary>从所选数据源导入任务</summary>
           <div class="catalog-controls">
             <button id="catalogRefreshButton" class="button button-secondary" type="button">同步公开目录</button>
             <input id="catalogSearch" type="search" placeholder="搜索任务名或商人" aria-label="搜索任务资料库">
@@ -134,7 +134,7 @@
                 <button id="catalogImportButton" class="button button-primary" type="button" disabled>加入清单</button>
               </div>
               <ul id="catalogObjectives" class="catalog-objectives"></ul>
-              <a id="catalogSourceLink" target="_blank" rel="noopener noreferrer">打开 Tarkov.dev API 来源</a>
+              <a id="catalogSourceLink" target="_blank" rel="noopener noreferrer">打开任务资料来源</a>
             </article>
           </div>
           <p class="catalog-warning">API 未标注具体游戏补丁版本，任务覆盖范围未经官方逐项核对。资料只作为人工确认的候选，不会自动标记完成或修改进度。</p>
@@ -169,6 +169,17 @@
           <button id="mobileCompanionButton" class="button button-secondary button-small" type="button">手机地图二维码</button>
         </div>
       </div>
+      <div class="source-picker" role="group" aria-label="数据来源">
+        <label>地图与任务资料来源
+          <select id="dataSourceSelect" aria-label="地图与任务资料来源">
+            <option value="tarkov.dev">Tarkov.dev · 默认</option>
+            <option value="eftarkov">EFTarkov · 中文公开资料</option>
+            <option value="reemr">RE3MR · 官网参考</option>
+          </select>
+        </label>
+        <p id="dataSourceNotice" class="planning-note" role="status"></p>
+        <p class="planning-note">已有任务、钥匙保留各自导入来源和进度；钥匙图标与藏身处资料仍来自 Tarkov.dev。切换不会重新导入或覆盖清单。</p>
+      </div>
       <div class="map-controls">
         <div class="map-select-controls">
           <label>地图<select id="mapSelect" aria-label="选择地图"></select></label>
@@ -178,7 +189,7 @@
             <label class="map-annotation-toggle"><input type="checkbox" data-map-annotation-filter="location" checked><span class="annotation-swatch is-location" aria-hidden="true"></span>地图地点</label>
             <label class="map-annotation-toggle"><input type="checkbox" data-map-annotation-filter="pmc-exit"><span class="annotation-swatch is-pmc" aria-hidden="true"></span>PMC撤离点</label>
             <label class="map-annotation-toggle"><input type="checkbox" data-map-annotation-filter="scav-exit"><span class="annotation-swatch is-scav" aria-hidden="true"></span>SCAV撤离点</label>
-            <label class="map-annotation-toggle"><input type="checkbox" data-map-annotation-filter="unknown-exit"><span class="annotation-swatch is-unknown-exit" aria-hidden="true"></span>未分类撤离点</label>
+            <label class="map-annotation-toggle" title="来源未提供可识别的阵营信息；实际可用阵营和撤离条件请核对来源及游戏内提示。"><input type="checkbox" data-map-annotation-filter="unknown-exit"><span class="annotation-swatch is-unknown-exit" aria-hidden="true"></span>阵营未确认的撤离点</label>
             <label class="map-annotation-toggle"><input type="checkbox" data-map-annotation-filter="transfer"><span class="annotation-swatch is-transfer" aria-hidden="true"></span>转移点</label>
           </div>
         </div>
@@ -189,6 +200,8 @@
           </div>
           <div class="map-view-actions" role="group" aria-label="地图视图控制">
             <button id="mapDrawButton" class="button button-secondary button-small" type="button" aria-pressed="false" title="按住鼠标拖动绘制路线" disabled>划线</button>
+            <label class="map-route-color-control"><span>颜色</span><input id="mapDrawingColor" type="color" value="#e5484d" aria-label="路线颜色"></label>
+            <select id="mapDrawingWidth" class="map-route-width-control" aria-label="路线粗细"><option value="2">细</option><option value="4" selected>中</option><option value="6">粗</option></select>
             <button id="mapUndoDrawingButton" class="button button-secondary button-small" type="button" disabled>撤销线条</button>
             <button id="mapClearDrawingsButton" class="button button-secondary button-small" type="button" disabled>清除线条</button>
             <button id="mapZoomOutButton" class="button button-secondary button-small" type="button" aria-label="缩小地图" title="缩小地图">−</button>
@@ -201,6 +214,7 @@
       </div>
       <div class="map-planner-layout">
         <div class="map-main-column">
+          <div class="map-route-status-row"><span id="mapRouteStatus" role="status" aria-live="polite">路线已同步</span><button id="assignLegacyRoutesButton" class="button button-secondary button-small" type="button" hidden>将旧路线归入本楼层</button><button id="retryRoutesButton" class="button button-secondary button-small" type="button" hidden>重试修改</button><button id="discardRoutesButton" class="button button-secondary button-small" type="button" hidden>放弃未同步修改</button></div>
           <div id="mapImageFrame" class="map-image-frame">
             <div id="mapCanvas" class="map-canvas">
               <img id="mapImage" alt="塔科夫地图底图" hidden>
@@ -217,7 +231,7 @@
           <div id="mapTargetList" class="map-target-list"></div>
         </aside>
       </div>
-      <p class="map-data-note">地图底图、任务区域、地点、撤离点与转移点来自 Tarkov.dev 公开资料；可用上方开关筛选地图地点、PMC/SCAV/未分类撤离点和转移点。任务点位及标注保留楼层信息，楼层切换只更换底图；右键任务标点可切换到访勾选。任务区域目前不附带独立说明图片。</p>
+      <p class="map-data-note">底图与坐标采用上方所选来源；具体覆盖、署名、许可和限制见来源说明。可筛选地图地点、撤离点和转移点。任务点位及标注保留楼层信息，楼层切换只更换底图；右键任务标点切换本来源到访记录。已有任务保持各自导入来源。</p>
     </section>
 
     <section class="hideout-upgrade-grid" aria-label="藏身处升级计划与材料">
@@ -257,6 +271,43 @@
         </details>
       </article>
     </section>
+
+    <details id="saveDataPanel" class="panel save-data-panel">
+      <summary class="panel-heading"><h2>存档与缓存</h2><span id="preferenceSyncStatus" class="muted" role="status">正在连接本机存档…</span></summary>
+      <div class="save-data-content">
+        <p id="saveDataStatus" class="muted" role="status"></p>
+        <p id="preferenceMigrationHelp" class="muted"></p>
+        <p>任务、钥匙回答、隐藏状态和备料计划保存在同一台电脑的存档目录；不同浏览器的待同步路线仍各自保留。</p>
+        <p class="muted">跨版本存档默认使用 Windows“保存的游戏”（Saved Games）稳定目录；旧根目录需明确选择一次。实际路径以本面板显示的存档根目录为准，覆盖目录可用 --data-dir 指定。旧端口或其他来源（origin）的浏览器偏好仍须在旧页面导出，再在这里显式导入。</p>
+        <div class="save-data-actions">
+          <button id="preferenceExportLocalButton" type="button" class="button button-secondary button-small">导出本浏览器偏好</button>
+          <label class="button button-secondary button-small">导入偏好文件<input id="preferenceImportInput" type="file" accept="application/json,.json" hidden></label>
+          <button id="preferenceExportButton" type="button" class="button button-secondary button-small">导出偏好备份与冲突</button>
+        </div>
+        <div id="preferenceConflictPanel" class="save-conflict" role="alert" hidden>
+          <p>检测到两个偏好版本，双方都已备份。请选择要继续使用的版本，不会合并或删除另一份。</p>
+          <button id="preferenceKeepServerButton" type="button" class="button button-secondary button-small">保留服务端版本</button>
+          <button id="preferenceKeepLocalButton" type="button" class="button button-secondary button-small">使用本浏览器版本</button>
+        </div>
+        <div class="save-data-actions">
+          <label>迁移来源目录<input id="saveImportPath" type="text" placeholder="绝对路径；只读取并复制，原目录不变" autocomplete="off"></label>
+          <button id="saveImportButton" type="button" class="button button-secondary button-small">备份并导入独立存档</button>
+          <button id="saveRefreshButton" type="button" class="button button-secondary button-small">刷新存档状态</button>
+        </div>
+        <div id="saveDatasetList" class="save-dataset-list"></div>
+        <p id="mapCacheStatus" class="muted" role="status"></p>
+        <div class="save-data-actions">
+          <button id="mapPreloadButton" type="button" class="button button-secondary button-small">预热当前来源</button>
+          <button id="mapPreloadAllButton" type="button" class="button button-secondary button-small">预热所有允许来源</button>
+          <button id="mapPreloadResumeButton" type="button" class="button button-secondary button-small">继续预热</button>
+          <button id="mapPreloadRestartButton" type="button" class="button button-secondary button-small">重新预热</button>
+          <button id="mapPreloadCancelButton" type="button" class="button button-secondary button-small">取消预热</button>
+        </div>
+        <p class="muted">启动时默认在后台预热所有允许来源，包括 RE3MR 官网明确链接且允许读取的原图；当前地图优先。继续/重新预热沿用上次范围，首次默认所有允许来源。重新预热会重新发现并重试，实际缓存处理以服务端策略为准。</p>
+        <p class="muted">原图体积可能较大；默认磁盘配额 512 MiB，可能暂停或淘汰旧缓存，不能承诺所有地图永久存齐。已发现、缓存命中、本轮完成处理、新下载、来源拦截、失败、预算暂停和取消分别显示；本轮结束不等于全地图下载成功。</p>
+        <p class="muted">RE3MR 原图仅供本机个人非商业查看，不经手机/LAN 再托管；此限制不代表取得作者授权或再分发许可。7 项已拒绝资源继续阻止，未允许或 robots 异常的资源不绕过。实体手机尚未验收；本预览不打包个人数据或地图图片，不发布或上传。</p>
+      </div>
+    </details>
 
     <details id="diagnosticsPanel" class="panel diagnostics-panel">
       <summary class="panel-heading diagnostics-heading">
@@ -330,7 +381,7 @@
       <div id="mapPointImageGallery" class="map-point-image-gallery"></div>
       <p id="mapPointImageUnavailable" class="muted" hidden>该点位没有可用的独立说明图片。</p>
     </div>
-    <a id="mapPointImageSource" class="map-point-image-source" target="_blank" rel="noopener noreferrer" hidden>打开 Tarkov.dev 任务来源</a>
+    <a id="mapPointImageSource" class="map-point-image-source" target="_blank" rel="noopener noreferrer" hidden>打开点位资料来源</a>
   </dialog>
 
   <dialog id="keyOwnershipDialog" class="key-ownership-dialog" aria-labelledby="keyOwnershipTitle">
@@ -378,6 +429,9 @@
   </dialog>
 
   <div id="toast" class="toast" role="status"></div>
+  <script src="/assets/route_tools.js" defer></script>
+  <script src="/assets/preference_sync.js" defer></script>
   <script src="/assets/app.js" defer></script>
+  <script src="/assets/save_tools.js" defer></script>
 </body>
 </html>

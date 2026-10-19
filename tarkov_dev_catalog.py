@@ -13,7 +13,6 @@ from urllib.request import Request, urlopen
 from catalog import (
     CatalogBundle,
     CatalogError,
-    EFTARKOV_ROOT,
 )
 from task_requirements import normalize_objective
 from tarkov_dev_maps import fetch_tarkov_dev_task_map_points
@@ -169,7 +168,7 @@ def _catalog_bundle(
                 "source_task_id": str(task_id).lower(),
                 "trader": trader,
                 "title": title,
-                "source_url": f"{EFTARKOV_ROOT}/task/{str(task_id).lower()}",
+                "source_url": f"https://tarkov.dev/task/{task_id}",
                 "objectives": [],
                 "prerequisites": [],
                 "normalized_name": normalized,
@@ -183,6 +182,7 @@ def _catalog_bundle(
     )
     digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     metadata = {
+        "provider": "tarkov.dev",
         "source_task_count": len(records),
         "source_version_label": None,
         "source_version_basis": "Tarkov.dev JSON API 未提供对应的游戏补丁版本标签",
@@ -427,7 +427,7 @@ def _task_details(
                 "item_id": item_id,
                 "item_kind": "key",
                 "map_ids": sorted(map_ids),
-                "source_url": f"{EFTARKOV_ROOT}/item/{item_id}",
+                "source_url": f"https://tarkov.dev/item/{item_id}",
                 "image_url": str(item.get("iconLink") or f"https://assets.tarkov.dev/{item_id}-icon.webp"),
                 "acquisition_methods": methods,
                 "map_points": [],
@@ -455,7 +455,11 @@ def _task_details(
         "prerequisites": prerequisites,
         "key_requirements": key_requirements,
         "map_points": map_points,
-        "source_url": f"{EFTARKOV_ROOT}/task/{task_id}" if TASK_ID_PATTERN.fullmatch(task_id) else "",
+        "source_url": f"https://tarkov.dev/task/{task_id}" if TASK_ID_PATTERN.fullmatch(task_id) else "",
+        "map_ids": sorted({str(map_id).lower() for objective in raw_objectives or []
+                           if isinstance(objective, dict)
+                           for map_id in (objective.get("maps") or [])
+                           if isinstance(map_id, str) and TASK_ID_PATTERN.fullmatch(map_id)}),
     }
 
 

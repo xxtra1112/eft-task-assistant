@@ -35,4 +35,24 @@ SVG basemaps are fetched on demand from `assets.tarkov.dev`, which serves maps m
 
 ## EFTarkov waypoint photographs
 
-A limited set of reviewed PvE Factory waypoint photographs is loaded from public pages on https://www.eftarkov.com. Each photograph retains a link to its map marker source. These third-party photographs are not bundled in the executable or granted under this project's MIT license; the game imagery and source content remain subject to their respective owners' rights. Task data and coordinates continue to use Tarkov.dev.
+Historical reviewed PvE Factory waypoint photograph metadata retains links to https://www.eftarkov.com. The current preview filters photographs under the site's robots-disallowed `/uploads/` paths at both backend and browser boundaries, including image-proxy fallbacks. It does not automatically load or bundle those photographs. Reference page links remain available. Such third-party imagery is not granted under this project's MIT license.
+
+## Multi-source preview
+
+The optional EFTarkov mode reads public HTML task/map pages and native SVG floors
+from https://www.eftarkov.com. It is not an official API. The preview respects the
+site's robots rules and does not request /api/ or /uploads/ photographs/icons
+through the new adapter. No broad redistribution license was verified; assets are
+loaded online on demand and are not bundled as MIT content.
+
+The RE3MR selector can retrieve original images explicitly linked from
+https://reemr.se for local personal noncommercial desktop viewing and local disk
+caching. Original attribution and encoding remain unchanged. No artwork is
+bundled, published, or exposed through the mobile/LAN image route. The homepage
+identifies CC BY-NC-SA 4.0; some pages also link to 2.0, and the FAQ asks website
+and application uploaders to contact the author. No individual authorization or
+commercial redistribution permission is claimed. Robots-denied or ambiguous
+resources remain blocked; the application does not guess replacement URLs.
+No RE3MR task API or calibrated quest coordinates have been verified. Other
+providers' coordinates are never overlaid on RE3MR maps. See
+[the source evidence and limits](docs/reemr-usage.md).

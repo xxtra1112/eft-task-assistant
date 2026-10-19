@@ -77,11 +77,19 @@ const elements = {
   mobilePairingStatus: document.querySelector("#mobilePairingStatus"),
   mobilePairingUrl: document.querySelector("#mobilePairingUrl"),
   refreshMobilePairingButton: document.querySelector("#refreshMobilePairingButton"),
+  dataSourceSelect: document.querySelector("#dataSourceSelect"),
+  dataSourceNotice: document.querySelector("#dataSourceNotice"),
   mapSelect: document.querySelector("#mapSelect"),
   mapFloorSelect: document.querySelector("#mapFloorSelect"),
   mapAnnotationFilters: document.querySelector("#mapAnnotationFilters"),
   mapImageFrame: document.querySelector("#mapImageFrame"),
   mapDrawings: document.querySelector("#mapDrawings"),
+  mapDrawingColor: document.querySelector("#mapDrawingColor"),
+  mapDrawingWidth: document.querySelector("#mapDrawingWidth"),
+  mapRouteStatus: document.querySelector("#mapRouteStatus"),
+  assignLegacyRoutes: document.querySelector("#assignLegacyRoutesButton"),
+  retryRoutes: document.querySelector("#retryRoutesButton"),
+  discardRoutes: document.querySelector("#discardRoutesButton"),
   mapDrawButton: document.querySelector("#mapDrawButton"),
   mapUndoDrawingButton: document.querySelector("#mapUndoDrawingButton"),
   mapClearDrawingsButton: document.querySelector("#mapClearDrawingsButton"),
@@ -196,7 +204,7 @@ const UI_TRANSLATIONS = Object.freeze({
   "地图地点": "Map locations",
   "PMC撤离点": "PMC extracts",
   "SCAV撤离点": "SCAV extracts",
-  "未分类撤离点": "Unclassified extracts",
+  "阵营未确认的撤离点": "Faction unconfirmed extracts",
   "转移点": "Transit points",
   "Tarkov.dev 暂未提供独立赛季 PvP 目录，不会套用常规 PvP 数据。": "Tarkov.dev does not currently provide a separate seasonal PvP catalog; regular PvP data is not substituted.",
   "地点": "Locations",
@@ -204,7 +212,7 @@ const UI_TRANSLATIONS = Object.freeze({
   "SCAV撤离": "SCAV extracts",
   "左键编号标记查看点位信息，右键切换到访勾选（勾显示在标记右下角）；右侧可隐藏单个点或查看全部说明图片。悬停撤离/转移标记可立即查看名称和楼层。": "Left-click numbered markers for point details; right-click to toggle visited status (the check appears at the marker's bottom-right). Hide individual points or view all source images in the list. Hover over extract/transit markers for instant names and floor details.",
   "悬停撤离/转移点立即查看名称和楼层；点击标记查看来源图片。": "Hover over extract/transit points for instant names and floor details; click a marker to view source images.",
-  "地图底图、任务区域、地点、撤离点与转移点来自 Tarkov.dev 公开资料；可用上方开关筛选地图地点、PMC/SCAV/未分类撤离点和转移点。任务点位及标注保留楼层信息，楼层切换只更换底图；右键任务标点可切换到访勾选。任务区域目前不附带独立说明图片。": "Basemaps, quest zones, locations, extracts, and transits use public Tarkov.dev data. Use the switches above to filter locations, PMC/SCAV/unclassified extracts, and transits. Quest markers retain floor details; changing floors only changes the basemap. Right-click a quest marker to toggle its visited check. Quest zones currently have no separate info images.",
+  "地图底图、任务区域、地点、撤离点与转移点来自 Tarkov.dev 公开资料；可用上方开关筛选地图地点、PMC/SCAV/阵营未确认的撤离点和转移点。任务点位及标注保留楼层信息，楼层切换只更换底图；右键任务标点可切换到访勾选。任务区域目前不附带独立说明图片。": "Basemaps, quest zones, locations, extracts, and transits use public Tarkov.dev data. Use the switches above to filter locations, PMC/SCAV/extracts with unconfirmed faction, and transits. Quest markers retain floor details; changing floors only changes the basemap. Right-click a quest marker to toggle its visited check. Quest zones currently have no separate info images.",
   "手机地图二维码": "Mobile map QR code",
   "MOBILE RAID MAP": "MOBILE RAID MAP",
   "手机随身地图": "Mobile raid map",
@@ -348,7 +356,7 @@ const UI_TRANSLATIONS = Object.freeze({
   "任务地图位置": "Quest map locations",
   "详情页暂无可验证的自动点位；资料库更新后会在地图区自动显示。": "No verifiable automatic waypoints are available yet. They will appear on the map when the catalog is updated.",
   "正在读取任务目标…": "Loading quest objectives…",
-  "任务点位已读取，但 Tarkov.dev 底图暂时无法加载；请检查网络后重试。": "Waypoint data loaded, but the Tarkov.dev map image is unavailable. Check the network and try again.",
+  "任务点位已读取，但当前来源底图暂时无法加载；请检查网络后重试。": "Waypoint data loaded, but the Tarkov.dev map image is unavailable. Check the network and try again.",
   "未能载入地图数据。": "Map data could not be loaded.",
   "截图预览加载失败": "Screenshot preview failed to load",
   "任务已加入当前档案": "Quest added to this profile",
@@ -631,12 +639,45 @@ const MAP_DRAWING_MAX_POINTS_PER_STROKE = 1000;
 const MAP_DRAWING_MAX_POINTS_TOTAL = 12000;
 const OPERATION_HISTORY_LIMIT = 40;
 let uiPreferenceScopeId = null;
+let uiPreferenceDatasetScopeId = null;
 let uiPreferences = null;
+let applyingUiPreferences = false;
+let restoringUiPreferences = false;
+let uiPreferenceActivationGeneration = 0;
+let stateRefreshJob = null;
+const preferenceSync = globalThis.PreferenceSync?.createClient({
+  storage: {
+    getItem: key => localStorage.getItem(key),
+    setItem: (key, value) => localStorage.setItem(key, value),
+    key: index => localStorage.key(index),
+    get length() { return localStorage.length; },
+  },
+  onStatus: renderPreferenceSyncStatus,
+  onApply: (preferences, scopeId) => {
+    if (scopeId !== uiPreferenceScopeId) return;
+    const needsRender = Boolean(uiPreferences);
+    applyActiveUiPreferences(readUiPreferences(scopeId, null, preferences));
+    if (needsRender && state && profileUiPreferenceScope(state.player?.id, state.selected_profile_id) === scopeId) {
+      renderTasks(state.tasks);
+      if (hideoutCatalog) renderHideoutPlanner();
+      restoringUiPreferences = true;
+      loadMapIndex({ restorePreferences: true }).finally(() => {
+        if (scopeId !== uiPreferenceScopeId) return;
+        restoringUiPreferences = false;
+        saveUiPreferences();
+      });
+    }
+  },
+});
 let hideoutCatalog = null;
 let hideoutLoading = null;
 let mapDrawingEnabled = false;
 let activeMapDrawing = null;
 let activeMapDrawingElement = null;
+const routeStates = new Map();
+const routeReads = new Map();
+let routeFlushRunning = false;
+let routeReadError = "";
 
 function safeStorageGet(key) {
   try {
@@ -693,6 +734,12 @@ function defaultUiPreferences() {
       diagnostics: Boolean(elements.diagnosticsPanel?.open),
     },
     mapDrawings: {},
+    routePendingOperations: [],
+    routeCacheRevisions: {},
+    routeCaches: {},
+    legacyRoutesImported: {},
+    routeStyle: { color: EftRouteTools.DEFAULT_COLOR, width: EftRouteTools.DEFAULT_WIDTH },
+    mobilePairingAddress: "",
   };
 }
 
@@ -701,13 +748,14 @@ function sanitizeMapDrawings(value) {
   const drawings = {};
   let remainingPoints = MAP_DRAWING_MAX_POINTS_TOTAL;
   const mapEntries = Object.entries(value).filter(([mapId, strokes]) => (
-    typeof mapId === "string" && mapId.length <= 120 && Array.isArray(strokes)
+    typeof mapId === "string" && mapId.length <= 300 && Array.isArray(strokes)
   )).slice(-40).reverse();
   for (const [mapId, sourceStrokes] of mapEntries) {
     const strokes = [];
     for (const sourceStroke of sourceStrokes.slice(-MAP_DRAWING_MAX_STROKES_PER_MAP).reverse()) {
-      if (!Array.isArray(sourceStroke)) continue;
-      const points = sourceStroke.slice(-MAP_DRAWING_MAX_POINTS_PER_STROKE).flatMap((point) => {
+      const normalized = EftRouteTools.normalizeStroke(sourceStroke, strokes.length);
+      if (!normalized) continue;
+      const points = normalized.points.slice(-MAP_DRAWING_MAX_POINTS_PER_STROKE).flatMap((point) => {
         if (!Array.isArray(point) || point.length < 2) return [];
         const x = Number(point[0]);
         const y = Number(point[1]);
@@ -717,7 +765,7 @@ function sanitizeMapDrawings(value) {
       if (points.length < 2 || remainingPoints < 2) continue;
       const keptPoints = points.slice(0, remainingPoints);
       if (keptPoints.length >= 2) {
-        strokes.unshift(keptPoints);
+        strokes.unshift({ ...normalized, points: keptPoints });
         remainingPoints -= keptPoints.length;
       }
     }
@@ -727,14 +775,14 @@ function sanitizeMapDrawings(value) {
   return drawings;
 }
 
-function readUiPreferences(scopeId, legacyProfileId = null) {
+function readUiPreferences(scopeId, legacyProfileId = null, supplied = undefined) {
   const defaults = defaultUiPreferences();
   try {
     const stored = safeStorageGet(UI_PREFERENCE_STORAGE_PREFIX + String(scopeId))
       || (legacyProfileId === null
         ? null
         : safeStorageGet(UI_PREFERENCE_STORAGE_PREFIX + String(legacyProfileId)));
-    const parsed = stored ? JSON.parse(stored) : null;
+    const parsed = supplied === undefined ? (stored ? JSON.parse(stored) : null) : supplied;
     if (!parsed || parsed.version !== UI_PREFERENCE_VERSION) return defaults;
     const zoom = Number(parsed.mapZoom);
     return {
@@ -824,7 +872,11 @@ function readUiPreferences(scopeId, legacyProfileId = null) {
             label: entry.label.slice(0, 500),
             type: entry.type.slice(0, 40),
             time: typeof entry.time === "string" ? entry.time.slice(0, 40) : "",
-            data: entry.data,
+            data: {
+              ...entry.data,
+              ...(entry.data.beforeTask ? { beforeTask: taskSnapshot(entry.data.beforeTask) } : {}),
+              ...(Array.isArray(entry.data.beforeTasks) ? { beforeTasks: entry.data.beforeTasks.map(taskSnapshot) } : {}),
+            },
             undone: Boolean(entry.undone),
           }))
         : [],
@@ -843,6 +895,20 @@ function readUiPreferences(scopeId, legacyProfileId = null) {
         diagnostics: typeof parsed.panels?.diagnostics === "boolean" ? parsed.panels.diagnostics : defaults.panels.diagnostics,
       },
       mapDrawings: sanitizeMapDrawings(parsed.mapDrawings),
+      routePendingOperations: Array.isArray(parsed.routePendingOperations)
+        ? parsed.routePendingOperations.filter(operation => operation && typeof operation === "object"
+          && typeof operation.operation_id === "string" && operation.operation_id.length <= 96
+          && ["append", "undo", "clear", "replace", "import_legacy", "assign_legacy"].includes(operation.operation)
+          && ["tarkov.dev", "eftarkov"].includes(operation.source)
+          && typeof operation.map_id === "string" && typeof operation.floor_key === "string") : [],
+      routeCacheRevisions: parsed.routeCacheRevisions && typeof parsed.routeCacheRevisions === "object" ? parsed.routeCacheRevisions : {},
+      routeCaches: sanitizeMapDrawings(parsed.routeCaches),
+      legacyRoutesImported: parsed.legacyRoutesImported && typeof parsed.legacyRoutesImported === "object" ? parsed.legacyRoutesImported : {},
+      routeStyle: {
+        color: /^#[0-9a-f]{6}$/i.test(parsed.routeStyle?.color || "") ? parsed.routeStyle.color : EftRouteTools.DEFAULT_COLOR,
+        width: [2, 4, 6].includes(parsed.routeStyle?.width) ? parsed.routeStyle.width : EftRouteTools.DEFAULT_WIDTH,
+      },
+      mobilePairingAddress: typeof parsed.mobilePairingAddress === "string" ? parsed.mobilePairingAddress : "",
     };
   } catch {
     return defaults;
@@ -850,10 +916,10 @@ function readUiPreferences(scopeId, legacyProfileId = null) {
 }
 
 function saveUiPreferences() {
-  if (!uiPreferences || uiPreferenceScopeId === null) return;
+  if (!uiPreferences || uiPreferenceScopeId === null || applyingUiPreferences || restoringUiPreferences) return;
   if (elements.mapSelect.value) uiPreferences.selectedMapId = elements.mapSelect.value;
   if (mapView?.map_id === elements.mapSelect.value && elements.mapFloorSelect.value) {
-    uiPreferences.selectedMapFloors[mapView.map_id] = elements.mapFloorSelect.value;
+    uiPreferences.selectedMapFloors[sourceMapPreferenceId(mapView.map_id)] = elements.mapFloorSelect.value;
   }
   uiPreferences.taskTraderFilter = elements.taskTraderFilter.value;
   uiPreferences.taskMapFilter = elements.taskMapFilter.value;
@@ -876,10 +942,9 @@ function saveUiPreferences() {
     catalog: elements.catalogPanel.open,
     diagnostics: elements.diagnosticsPanel.open,
   };
-  const saved = safeStorageSet(
-    UI_PREFERENCE_STORAGE_PREFIX + uiPreferenceScopeId,
-    JSON.stringify(uiPreferences),
-  );
+  const saved = preferenceSync
+    ? preferenceSync.update(uiPreferenceScopeId, uiPreferences)
+    : safeStorageSet(UI_PREFERENCE_STORAGE_PREFIX + uiPreferenceScopeId, JSON.stringify(uiPreferences));
   if (!saved) toast("浏览器未能保存界面缓存；请检查本地存储空间或隐私设置。");
 }
 
@@ -904,7 +969,7 @@ function captureUiUndoSnapshot() {
 
 function captureMapDrawingUndoSnapshot(mapId) {
   if (!uiPreferences) return null;
-  return { mapId, strokes: cloneUndoValue(uiPreferences.mapDrawings?.[mapId] || []) };
+  return { mapId, strokes: cloneUndoValue(mapDrawingStrokes(mapId)) };
 }
 
 function recordMapDrawingOperation(label, before) {
@@ -938,7 +1003,10 @@ function recordUiOperation(label, before) {
 }
 
 function taskSnapshot(task) {
-  return task ? cloneUndoValue(task) : null;
+  if (!task) return null;
+  const fields = new Set(["id", "profile_id", "trader", "title", "objective", "item_name",
+    "required_count", "current_count", "state", "source_task_id", "source_url", "source_version", "requirements"]);
+  return cloneUndoValue(Object.fromEntries(Object.entries(task).filter(([key]) => fields.has(key))));
 }
 
 function mostRecentUndoableOperation() {
@@ -946,8 +1014,12 @@ function mostRecentUndoableOperation() {
 }
 
 function operationMapName(mapId) {
-  const option = [...elements.mapSelect.options].find((entry) => entry.value === String(mapId || ""));
-  return option?.dataset.mapName || option?.textContent.split(" · ")[0] || "当前地图";
+  const scope = EftRouteTools.parseScopeKey(mapId);
+  const nativeId = scope?.map_id || String(mapId || "");
+  const option = [...elements.mapSelect.options].find((entry) => entry.value === nativeId);
+  const name = option?.dataset.mapName || option?.textContent.split(" · ")[0] || "当前地图";
+  const floorName = mapView?.floors?.find(floor => String(floor.key) === scope?.floor_key)?.name || scope?.floor_key;
+  return floorName ? `${name} · ${floorName}` : name;
 }
 
 function isOpaqueOperationDetail(value) {
@@ -1090,7 +1162,7 @@ async function undoOperation(operationId) {
       await applyUiUndoSnapshot(entry.data.before);
     } else if (entry.type === "task") {
       if (entry.data.beforeTask) {
-        await post("/api/tasks/restore", { tasks: [entry.data.beforeTask] });
+        await post("/api/tasks/restore", { tasks: [taskSnapshot(entry.data.beforeTask)] });
       } else if (entry.data.afterTaskId) {
         await post(`/api/tasks/${entry.data.afterTaskId}/delete`);
       }
@@ -1098,15 +1170,14 @@ async function undoOperation(operationId) {
       await loadMapIndex({ preserveSelection: true });
       if (entry.data.beforeUi) await applyUiUndoSnapshot(entry.data.beforeUi);
   } else if (entry.type === "tasks") {
-      await post("/api/tasks/restore", { tasks: entry.data.beforeTasks || [] });
+      await post("/api/tasks/restore", { tasks: (entry.data.beforeTasks || []).map(taskSnapshot) });
       await refreshState();
       await loadMapIndex({ preserveSelection: true });
       if (entry.data.beforeUi) await applyUiUndoSnapshot(entry.data.beforeUi);
     } else if (entry.type === "map-drawing") {
-      if (entry.data.strokes?.length) uiPreferences.mapDrawings[entry.data.mapId] = cloneUndoValue(entry.data.strokes);
-      else delete uiPreferences.mapDrawings[entry.data.mapId];
-      saveUiPreferences();
-      if (currentMapDrawingId() === entry.data.mapId) renderMapDrawings();
+      queueRouteOperation("replace", EftRouteTools.parseScopeKey(entry.data.mapId), {
+        strokes: EftRouteTools.normalizeStrokes(entry.data.strokes || []),
+      });
     } else if (entry.type === "map-visit") {
       await post("/api/map/markers/visit", {
         map_id: entry.data.mapId,
@@ -1133,18 +1204,64 @@ async function undoOperation(operationId) {
   }
 }
 
-function activateProfileUiPreferences(playerId, profileId, isAdmin = false) {
-  const normalizedScopeId = `${String(playerId || "local")}:${String(profileId)}`;
+function datasetUiPreferenceScope(saveData) {
+  const datasetId = saveData?.current_dataset_id || saveData?.dataset_id;
+  if (typeof saveData?.root !== "string" || !saveData.root.trim()
+      || (saveData.status !== "unmanaged" && (saveData.status !== "ready" || typeof datasetId !== "string" || !datasetId))) {
+    throw new Error("无法确认存档根目录与数据集，浏览器偏好和离线路线暂不载入；旧缓存仍保留，可显式导出。");
+  }
+  return "dataset-v1:" + JSON.stringify([saveData.root, saveData.status === "unmanaged" ? "unmanaged" : datasetId]);
+}
+
+function profileUiPreferenceScope(playerId, profileId) {
+  if (uiPreferenceDatasetScopeId === null) return null;
+  return uiPreferenceDatasetScopeId + ":" + JSON.stringify([String(playerId || "local"), String(profileId)]);
+}
+
+async function activateProfileUiPreferences(playerId, profileId, isAdmin = false) {
+  const normalizedScopeId = profileUiPreferenceScope(playerId, profileId);
+  if (normalizedScopeId === null) throw new Error("尚未确认存档范围，浏览器偏好暂不载入。");
   if (uiPreferenceScopeId === normalizedScopeId) return false;
+  const generation = ++uiPreferenceActivationGeneration;
   clearTimeout(keyOwnershipPromptTimer);
   keyOwnershipPromptTimer = null;
   clearTimeout(keyOwnershipAnswerTimer);
   keyOwnershipAnswerTimer = null;
   uiPreferenceScopeId = normalizedScopeId;
+  restoringUiPreferences = true;
+  uiPreferences = null;
   deferredKeyOwnershipIds.clear();
   activeKeyOwnershipId = "";
   if (elements.keyOwnershipDialog.open) elements.keyOwnershipDialog.close();
-  uiPreferences = readUiPreferences(normalizedScopeId, isAdmin ? profileId : null);
+  const legacyKeys = [UI_PREFERENCE_STORAGE_PREFIX + `${String(playerId || "local")}:${String(profileId)}`,
+    ...(isAdmin ? [UI_PREFERENCE_STORAGE_PREFIX + String(profileId)] : [])];
+  if (preferenceSync) {
+    await preferenceSync.activate({ scopeId: normalizedScopeId, profileId, datasetScopeId: uiPreferenceDatasetScopeId,
+      legacyKeys,
+      defaults: defaultUiPreferences() });
+  } else {
+    applyActiveUiPreferences(readUiPreferences(normalizedScopeId));
+    renderPreferenceSyncStatus({ kind: "error", message: "共享偏好脚本未载入，当前只保存本浏览器缓存。" });
+  }
+  if (generation !== uiPreferenceActivationGeneration || uiPreferenceScopeId !== normalizedScopeId) return false;
+  return true;
+}
+
+function applyActiveUiPreferences(preferences) {
+  applyingUiPreferences = true;
+  try {
+    setActiveUiPreferences(preferences);
+  } finally {
+    applyingUiPreferences = false;
+  }
+}
+
+function setActiveUiPreferences(preferences) {
+  uiPreferences = preferences;
+  routeStates.clear();
+  routeReadError = "";
+  elements.mapDrawingColor.value = uiPreferences.routeStyle.color;
+  elements.mapDrawingWidth.value = String(uiPreferences.routeStyle.width);
   hiddenTaskIds.clear();
   for (const key of uiPreferences.hiddenTaskIds) hiddenTaskIds.add(key);
   showHiddenTasks = uiPreferences.showHiddenTasks;
@@ -1172,8 +1289,59 @@ function activateProfileUiPreferences(playerId, profileId, isAdmin = false) {
   renderMapDrawings();
   syncHideoutMaterialsLayout();
   renderOperationHistory();
-  return true;
 }
+
+function renderPreferenceSyncStatus(status) {
+  const label = document.querySelector("#preferenceSyncStatus");
+  if (label) {
+    label.textContent = status.message || "";
+    label.dataset.state = status.kind;
+  }
+  const help = document.querySelector("#preferenceMigrationHelp");
+  if (help) help.textContent = globalThis.PreferenceSync?.MIGRATION_HELP || "";
+  const panel = document.querySelector("#preferenceConflictPanel");
+  if (panel) panel.hidden = !status.conflict;
+  for (const selector of ["#preferenceKeepServerButton", "#preferenceKeepLocalButton"]) {
+    const button = document.querySelector(selector);
+    if (button) button.disabled = !status.conflict || status.kind === "saving";
+  }
+}
+
+function downloadPreferenceJson(value, filename) {
+  const blob = new Blob([JSON.stringify(value, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+document.querySelector("#preferenceKeepServerButton")?.addEventListener("click", () => preferenceSync?.resolve("server"));
+document.querySelector("#preferenceKeepLocalButton")?.addEventListener("click", () => preferenceSync?.resolve("local"));
+document.querySelector("#preferenceExportButton")?.addEventListener("click", async () => {
+  try {
+    if (!preferenceSync) throw new Error("共享偏好脚本未载入。");
+    downloadPreferenceJson(await preferenceSync.exportConflicts(), "eft-preference-conflicts.json");
+  } catch (error) { toast(error.message); }
+});
+document.querySelector("#preferenceExportLocalButton")?.addEventListener("click", () => {
+  try {
+    if (!preferenceSync) throw new Error("共享偏好脚本未载入；请按状态区说明手动导出。");
+    downloadPreferenceJson(preferenceSync.exportLocal(location.origin), "eft-browser-preferences.json");
+  } catch (error) { toast(error.message); }
+});
+document.querySelector("#preferenceImportInput")?.addEventListener("change", async event => {
+  const scopeId = uiPreferenceScopeId;
+  const file = event.target.files?.[0];
+  if (!file) return;
+  try {
+    if (!preferenceSync) throw new Error("共享偏好脚本未载入。");
+    await preferenceSync.importLocal(await file.text(), scopeId);
+  } catch (error) { toast(error.message); }
+  finally { event.target.value = ""; }
+});
+window.addEventListener("online", () => preferenceSync?.retry(true));
 
 async function request(path, options = {}) {
   const response = await fetch(path, {
@@ -1192,6 +1360,7 @@ async function request(path, options = {}) {
 }
 
 function post(path, payload = {}) {
+  if (path === "/api/map/markers/visit") payload = { ...payload, source: mapView?.source_provider || state?.data_source || "tarkov.dev" };
   return request(path, { method: "POST", body: JSON.stringify(payload) });
 }
 
@@ -1246,7 +1415,7 @@ function updateMobilePairingCountdown() {
   elements.mobilePairingStatus.textContent = `${translateUiText("二维码有效期：")}${remaining} ${translateUiText("秒")}`;
 }
 
-function generateMobilePairing() {
+function generateMobilePairing({ rememberSelection = false } = {}) {
   const generation = ++mobilePairingGeneration;
   clearInterval(mobilePairingTimer);
   mobilePairingTimer = null;
@@ -1260,7 +1429,7 @@ function generateMobilePairing() {
     try {
       await post("/api/mobile/pairing/cancel");
       if (!elements.mobilePairingDialog.open || generation !== mobilePairingGeneration) return;
-      const result = await post("/api/mobile/pairing", { address: elements.mobilePairingAddress.value });
+      const result = await post("/api/mobile/pairing", { address: elements.mobilePairingAddress.value, remember_selection: rememberSelection });
       if (!elements.mobilePairingDialog.open) {
         await post("/api/mobile/pairing/cancel").catch(() => {});
         return;
@@ -1307,9 +1476,14 @@ async function openMobilePairing() {
     elements.mobilePairingAddress.replaceChildren(...addresses.map((address) => {
       const option = document.createElement("option");
       option.value = address;
-      option.textContent = `${address}:${network.port}`;
+      const candidate = network.candidates?.find(entry => entry.address === address);
+      const kind = { wifi: "Wi-Fi", ethernet: "以太网", vpn: "VPN", virtual: "虚拟网卡", unknown: "网卡信息未知" }[candidate?.interface_type] || "";
+      option.textContent = candidate ? `${candidate.interface_name} · ${address}:${network.port}${kind ? ` · ${kind}` : ""}${candidate.recommended ? " · 推荐" : ""}` : `${address}:${network.port}`;
       return option;
     }));
+    const preferred = network.saved_address_valid ? network.preferred_address
+      : addresses.includes(uiPreferences?.mobilePairingAddress) ? uiPreferences.mobilePairingAddress : network.preferred_address;
+    if (addresses.includes(preferred)) elements.mobilePairingAddress.value = preferred;
     elements.mobilePairingContent.hidden = false;
     await generateMobilePairing();
   } catch (error) {
@@ -1791,7 +1965,7 @@ function taskHiddenByKey(task) {
 function itemImageProxyUrl(imageUrl) {
   try {
     const url = new URL(imageUrl);
-    if (url.protocol !== "https:" || !["assets.tarkov.dev", "www.eftarkov.com"].includes(url.hostname)) return "";
+    if (url.protocol !== "https:" || url.hostname !== "assets.tarkov.dev") return "";
     return `https://images.weserv.nl/?url=${encodeURIComponent(url.host + url.pathname)}`;
   } catch {
     return "";
@@ -1799,29 +1973,106 @@ function itemImageProxyUrl(imageUrl) {
 }
 
 function setItemImageSources(image, fallback, imageUrls) {
-  const sources = [...new Set(imageUrls.filter(Boolean))];
+  const sources = [...new Set(imageUrls.filter((value) => {
+    try {
+      const url = new URL(value);
+      if (url.protocol !== "https:" || url.username || url.password) return false;
+      return url.hostname === "assets.tarkov.dev"
+        || (url.hostname === "images.weserv.nl" && /^assets\.tarkov\.dev\//.test(url.searchParams.get("url") || ""));
+    } catch {
+      return false;
+    }
+  }))];
+  const signature = JSON.stringify(sources);
+  if (image.dataset.sourceSignature === signature) return;
+  image.dataset.sourceSignature = signature;
   let nextSourceIndex = 0;
   image.referrerPolicy = "no-referrer";
-  fallback.hidden = false;
-  image.hidden = false;
+  const setStatus = (status) => {
+    image.dataset.imageState = status;
+    fallback.dataset.imageState = status;
+    const labels = currentLanguage === "en"
+      ? { loading: "Loading image", error: "Image unavailable", missing: "No image available" }
+      : { loading: "图片加载中", error: "图片加载失败", missing: "暂无图片资料" };
+    fallback.title = labels[status] || "";
+    fallback.setAttribute("aria-label", labels[status] || "");
+    image.hidden = status === "error" || status === "missing";
+    image.style.opacity = status === "loading" ? "0" : "";
+    fallback.hidden = status === "ready";
+  };
+  setStatus(sources.length ? "loading" : "missing");
   image.onload = () => {
-    image.hidden = false;
-    fallback.hidden = true;
+    if (image.naturalWidth > 0) setStatus("ready");
+    else image.onerror();
   };
   image.onerror = () => {
     if (nextSourceIndex < sources.length) {
       image.src = sources[nextSourceIndex++];
       return;
     }
-    image.hidden = true;
-    fallback.hidden = false;
+    setStatus("error");
   };
   image.removeAttribute("src");
   if (sources.length) image.src = sources[nextSourceIndex++];
-  else image.hidden = true;
+}
+
+function migrateKeyPreferenceAliases(tasks) {
+  if (!uiPreferences) return;
+  const targets = new Map();
+  for (const task of tasks) {
+    for (const key of task.key_requirements || []) {
+      const canonicalId = String(key.item_id || "").trim().toLowerCase();
+      if (!/^[0-9a-f]{24}$/.test(canonicalId)) continue;
+      for (const value of Array.isArray(key.preference_aliases) ? key.preference_aliases : []) {
+        const alias = String(value || "").trim().toLowerCase();
+        if (!alias || alias === canonicalId) continue;
+        if (!targets.has(alias)) targets.set(alias, new Set());
+        targets.get(alias).add(canonicalId);
+      }
+    }
+  }
+  const known = new Set(uiPreferences.keyFilterKnownIds);
+  const canonicalKnown = new Set(known);
+  const aliasesById = new Map();
+  for (const [alias, candidates] of targets) {
+    if (candidates.size !== 1 || !known.has(alias)) continue;
+    const canonicalId = [...candidates][0];
+    if (!aliasesById.has(canonicalId)) aliasesById.set(canonicalId, []);
+    aliasesById.get(canonicalId).push(alias);
+  }
+  let changed = false;
+  for (const [canonicalId, aliases] of aliasesById) {
+    if (canonicalKnown.has(canonicalId)) continue;
+    const hiddenStates = new Set(aliases.map(alias => hiddenKeyIds.has(alias)));
+    const answers = new Set(aliases.map(alias => uiPreferences.keyOwnershipAnswers[alias])
+      .filter(answer => typeof answer === "boolean"));
+    if (hiddenStates.size !== 1 || answers.size > 1) continue;
+    known.add(canonicalId);
+    if ([...hiddenStates][0]) hiddenKeyIds.add(canonicalId);
+    else hiddenKeyIds.delete(canonicalId);
+    if (!Object.prototype.hasOwnProperty.call(uiPreferences.keyOwnershipAnswers, canonicalId) && answers.size === 1) {
+      uiPreferences.keyOwnershipAnswers[canonicalId] = [...answers][0];
+    }
+    if (aliases.some(alias => uiPreferences.newKeyIds.includes(alias))) {
+      uiPreferences.newKeyIds = [...new Set([...uiPreferences.newKeyIds, canonicalId])];
+    }
+    if (aliases.some(alias => uiPreferences.keyOwnershipPendingIds.includes(alias)) && answers.size === 0) {
+      uiPreferences.keyOwnershipPendingIds = [...new Set([...uiPreferences.keyOwnershipPendingIds, canonicalId])];
+    }
+    if (answers.size === 1) {
+      uiPreferences.keyOwnershipPendingIds = uiPreferences.keyOwnershipPendingIds
+        .filter(keyId => keyId !== canonicalId && !aliases.includes(keyId));
+    }
+    changed = true;
+  }
+  if (changed) {
+    uiPreferences.keyFilterKnownIds = [...known].slice(-300);
+    saveUiPreferences();
+  }
 }
 
 function renderKeySummary(tasks) {
+  migrateKeyPreferenceAliases(tasks);
   const keysById = new Map();
   taskKeyIdsByTask = new Map();
   for (const task of tasks) {
@@ -2135,7 +2386,7 @@ function refreshMapLanguage() {
       : option.dataset.nameZh || option.textContent;
   }
   if (elements.mapSourceLink.href) {
-    elements.mapSourceLink.textContent = currentLanguage === "en" ? "Tarkov.dev map source" : "Tarkov.dev 地图来源";
+    elements.mapSourceLink.textContent = (mapView?.source_label || "Tarkov.dev") + (currentLanguage === "en" ? " map source" : " 地图来源");
   }
   updateMapArtworkAttribution();
   renderMapTargets(mapView.markers || [], mapView.tasks || []);
@@ -2598,7 +2849,7 @@ function renderTasks(tasks) {
   updateTraderFilterOptions(activeTasks);
   renderKeySummary(activeTasks);
   updateTaskMapFilterOptions(activeTasks);
-  if (uiPreferences && uiPreferenceScopeId === `${String(state?.player?.id || "local")}:${String(state?.selected_profile_id)}`) {
+  if (uiPreferences && uiPreferenceScopeId === profileUiPreferenceScope(state?.player?.id, state?.selected_profile_id)) {
     const traderPreferenceExists = [...elements.taskTraderFilter.options]
       .some((option) => option.value === uiPreferences.taskTraderFilter);
     if (traderPreferenceExists) elements.taskTraderFilter.value = uiPreferences.taskTraderFilter;
@@ -2931,20 +3182,21 @@ function isMp133GunsmithTask(task) {
 function renderCatalogSummary() {
   const catalog = state?.catalog;
   const profile = state?.profiles?.find((entry) => entry.id === state.selected_profile_id);
-  const unsupportedSeason = profile?.game_mode === "pvp-season";
-  elements.catalogRefresh.disabled = Boolean(state?.catalog_busy) || unsupportedSeason;
+  const unsupportedSeason = !state?.data_sources?.find((source) => source.id === state.data_source)?.tasks;
+  elements.catalogRefresh.disabled = Boolean(state?.catalog_busy) || !state?.data_sources?.find((source) => source.id === state.data_source)?.tasks;
   elements.catalogRefresh.textContent = state?.catalog_busy
     ? "同步中…"
-    : unsupportedSeason ? "赛季 PvP 暂不支持" : "同步公开目录";
+    : unsupportedSeason ? "当前来源无此模式任务" : "同步公开目录";
   if (catalog) {
     const version = catalog.source_version && catalog.source_version !== "unknown"
       ? catalog.source_version
       : "版本未知";
     const fetchedAt = catalog.fetched_at ? new Date(catalog.fetched_at).toLocaleString() : "时间未知";
-    elements.catalogSummary.textContent = `${catalog.task_count} 条任务 · Tarkov.dev JSON API · ${version} · 获取于 ${fetchedAt} · 游戏补丁覆盖未核实`;
+    const label = state.data_sources?.find((source) => source.id === state.data_source)?.label || state.data_source;
+    elements.catalogSummary.textContent = `${catalog.task_count} 条任务 · ${label} · ${version} · 获取于 ${fetchedAt} · 游戏补丁覆盖未核实`;
   } else {
     elements.catalogSummary.textContent = unsupportedSeason
-      ? "Tarkov.dev 暂未提供独立赛季 PvP 目录，不会套用常规 PvP 数据。"
+      ? "当前来源未提供已核验的此模式任务目录，不会套用其他来源或游戏模式数据。"
       : "尚未同步任务资料。同步只读取公开任务页面，不会覆盖个人进度。";
   }
   elements.catalogStatus.textContent = state?.catalog_error || state?.catalog_status || "";
@@ -3331,10 +3583,12 @@ function renderScreenshotCandidates() {
 }
 
 async function loadMapIndex({ preserveSelection = false, restorePreferences = false } = {}) {
+  const requestedSource = state?.data_source || "tarkov.dev";
   elements.mapPlaceholder.hidden = false;
   elements.mapPlaceholder.textContent = "正在读取地图目录和清单任务点位；首次载入可能稍慢…";
   try {
-    const result = await request("/api/maps");
+    const result = await request("/api/maps?source=" + encodeURIComponent(requestedSource));
+    if (requestedSource !== (state?.data_source || "tarkov.dev")) return;
     const previousMapId = elements.mapSelect.value;
     const previousTaskMapId = elements.taskMapFilter.value;
     const preferredTaskMapId = restorePreferences ? uiPreferences?.taskMapFilter : previousTaskMapId;
@@ -3398,6 +3652,7 @@ async function loadMapIndex({ preserveSelection = false, restorePreferences = fa
     saveUiPreferences();
     await loadMapView();
   } catch (error) {
+    if (requestedSource !== (state?.data_source || "tarkov.dev")) return;
     elements.mapPlaceholder.textContent = `地图目录读取失败：${error.message}`;
     elements.mapSourceLink.removeAttribute("href");
     elements.mapArtworkAttribution.hidden = true;
@@ -3446,7 +3701,7 @@ function groupMapMarkers(markers, tasks) {
 }
 
 function renderMapAnnotations() {
-  if (!mapView) return;
+  if (!mapView || mapView.reference_material || mapView.reference_only) return;
   const visibleCategories = new Set(
     [...elements.mapAnnotationFilters.querySelectorAll("input[data-map-annotation-filter]")]
       .filter((input) => input.checked)
@@ -3718,11 +3973,9 @@ function safePointImageUrl(value) {
     const url = new URL(value, "https://assets.tarkov.dev");
     const approvedAsset = url.hostname === "assets.tarkov.dev"
       && /^\/(?:[A-Za-z0-9._/-]+)\.(?:webp|png|jpe?g)$/i.test(url.pathname);
-    const approvedPointPhoto = url.hostname === "www.eftarkov.com"
-      && /^\/uploads\/infoImg\/[A-Za-z0-9_-]+\.(?:webp|png|jpe?g)$/i.test(url.pathname);
     if (
       url.protocol !== "https:" || url.username || url.password || url.port
-      || url.search || url.hash || !(approvedAsset || approvedPointPhoto)
+      || url.search || url.hash || !approvedAsset
       || url.pathname.split("/").includes("..")
     ) return "";
     return url.href;
@@ -3754,7 +4007,7 @@ function createPointImageLink(point, options = {}) {
     : "查看点位信息";
   link.title = imageCount
     ? `通过此链接查看该点位的全部 ${imageCount} 张图片和说明`
-    : "打开 Tarkov.dev 任务来源页";
+    : "打开点位资料来源页";
   link.addEventListener("click", (event) => {
     event.preventDefault();
     showMapPointImage({
@@ -3772,7 +4025,7 @@ function renderMapPointImage() {
   elements.mapPointImageUnavailable.hidden = mapPointImageUrls.length > 0;
   elements.mapPointImageUnavailable.textContent = mapPointImageUrls.length
     ? ""
-    : "该任务位置目前没有独立说明图片；可打开 Tarkov.dev 任务资料页查看目标。";
+    : "本来源当前没有可自动读取的独立说明图片；可打开点位资料来源页查看。";
   for (const [index, imageUrl] of mapPointImageUrls.entries()) {
     const card = document.createElement("figure");
     card.className = "map-point-image-card";
@@ -3805,69 +4058,251 @@ function showMapPointImage(marker) {
     marker.title,
     marker.floor_name,
     marker.description,
+    marker.image_notice,
   ].filter(Boolean).join(" · ");
   const sourceUrl = marker.source_image_page_url || marker.source_page_url || marker.source_url;
   elements.mapPointImageSource.hidden = !sourceUrl;
   elements.mapPointImageSource.textContent = marker.source_image_provider === "eftarkov.com"
     ? (currentLanguage === "en" ? "Open EFTarkov photo source" : "打开 EFTarkov 图片来源")
-    : (currentLanguage === "en" ? "Open Tarkov.dev source" : "打开 Tarkov.dev 来源");
+    : (currentLanguage === "en" ? "Open waypoint source" : "打开点位资料来源");
   if (sourceUrl) elements.mapPointImageSource.href = sourceUrl;
   renderMapPointImage();
   if (!elements.mapPointImageDialog.open) elements.mapPointImageDialog.showModal();
 }
 
+function sourceMapPreferenceId(mapId) {
+  const source = mapView?.source_provider || state?.data_source || "tarkov.dev";
+  return source === "tarkov.dev" ? String(mapId || "") : String(source) + ":" + String(mapId || "");
+}
+
 function currentMapDrawingId() {
-  return String(elements.mapSelect.value || mapView?.map_id || "");
+  return EftRouteTools.scopeKey(currentRouteScope());
+}
+
+function currentRouteScope() {
+  return {
+    source: mapView?.source_provider || state?.data_source || "tarkov.dev",
+    map_id: String(mapView?.map_id || elements.mapSelect.value || ""),
+    floor_key: String(mapView?.floor?.key || ""),
+  };
+}
+
+function routeOperationKey(operation) {
+  return EftRouteTools.scopeKey(operation);
 }
 
 function mapDrawingStrokes(mapId = currentMapDrawingId()) {
-  return uiPreferences?.mapDrawings?.[mapId] || [];
+  let strokes = EftRouteTools.normalizeStrokes(routeStates.get(mapId)?.strokes || uiPreferences?.routeCaches?.[mapId] || uiPreferences?.mapDrawings?.[mapId] || []);
+  for (const operation of uiPreferences?.routePendingOperations || []) {
+    if (routeOperationKey(operation) !== mapId || operation.operation === "import_legacy") continue;
+    if (operation.blocked) break;
+    if (["undo", "clear", "replace"].includes(operation.operation)
+        && operation.base_signature !== EftRouteTools.fingerprint(strokes)) break;
+    if (operation.operation === "append" && !strokes.some(stroke => stroke.id === operation.stroke.id)) strokes.push(operation.stroke);
+    if (operation.operation === "undo") strokes.pop();
+    if (operation.operation === "clear") strokes = [];
+    if (operation.operation === "replace") strokes = EftRouteTools.normalizeStrokes(operation.strokes);
+  }
+  return strokes;
+}
+
+function cacheRouteResponse(response, key) {
+  const previous = routeStates.get(key);
+  if (previous && Number(response.revision) < Number(previous.revision)) return;
+  const strokes = response.unchanged ? previous?.strokes || uiPreferences?.routeCaches?.[key] || [] : EftRouteTools.normalizeStrokes(response.strokes);
+  routeStates.set(key, { ...previous, ...response, strokes });
+  if (uiPreferences && !response.unchanged) {
+    uiPreferences.routeCaches[key] = strokes;
+    uiPreferences.routeCaches = sanitizeMapDrawings(uiPreferences.routeCaches);
+    uiPreferences.routeCacheRevisions[key] = response.revision;
+    saveUiPreferences();
+  }
+}
+
+async function readMapRoutes(scope, force = false, operationId = "") {
+  if (!scope || !["tarkov.dev", "eftarkov"].includes(scope.source)) return null;
+  const key = EftRouteTools.scopeKey(scope);
+  const owner = uiPreferenceScopeId;
+  const query = new URLSearchParams({ source: scope.source, map_id: scope.map_id, floor: scope.floor_key || "", profile_id: String(state.selected_profile_id) });
+  if (!force && routeStates.has(key)) query.set("since", String(routeStates.get(key).revision));
+  if (operationId) query.set("operation_id", operationId);
+  const response = await request(`/api/map/drawings?${query}`);
+  if (owner !== uiPreferenceScopeId || scope.source !== state?.data_source
+      || mapView?.reference_material || mapView?.reference_only) return null;
+  cacheRouteResponse(response, key);
+  routeReadError = "";
+  return response;
+}
+
+function queueRouteOperation(operation, scope = currentRouteScope(), details = {}) {
+  if (mapView?.reference_material || mapView?.reference_only) return false;
+  if (!uiPreferences || !scope || !scope.map_id || !["tarkov.dev", "eftarkov"].includes(scope.source)) return false;
+  if (uiPreferences.routePendingOperations.length >= 120) {
+    toast("尚未同步的路线修改过多，请恢复连接或处理冲突后继续。");
+    return false;
+  }
+  const key = EftRouteTools.scopeKey(scope);
+  const entry = {
+    ...scope, operation,
+    operation_id: crypto.randomUUID(),
+    profile_id: state.selected_profile_id,
+    base_signature: EftRouteTools.fingerprint(mapDrawingStrokes(key)),
+    ...details,
+  };
+  uiPreferences.routePendingOperations.push(entry);
+  saveUiPreferences();
+  if (!activeMapDrawing) renderMapDrawings();
+  else updateMapDrawingButtons();
+  queueMicrotask(flushRouteOperations);
+  return true;
+}
+
+async function flushRouteOperations() {
+  if (routeFlushRunning || !uiPreferences || !state || mapView?.reference_material
+      || mapView?.reference_only || !["tarkov.dev", "eftarkov"].includes(state.data_source)) return;
+  routeFlushRunning = true;
+  const owner = uiPreferenceScopeId;
+  try {
+    while (owner === uiPreferenceScopeId && uiPreferences) {
+      const blockedKeys = new Set(uiPreferences.routePendingOperations.filter(operation => operation.blocked).map(routeOperationKey));
+      if (mapView?.reference_material || mapView?.reference_only) break;
+      const operation = uiPreferences.routePendingOperations.find(entry => entry.source === state.data_source
+        && entry.profile_id === state.selected_profile_id && !blockedKeys.has(routeOperationKey(entry)));
+      if (!operation) break;
+      const key = routeOperationKey(operation);
+      try {
+        const snapshot = await readMapRoutes(operation, true, operation.operation_id);
+        if (!snapshot || owner !== uiPreferenceScopeId || operation.source !== state.data_source) break;
+        if (snapshot.operation_applied) {
+          uiPreferences.routePendingOperations = uiPreferences.routePendingOperations.filter(entry => entry.operation_id !== operation.operation_id);
+          if (operation.legacyKey) uiPreferences.legacyRoutesImported[operation.legacyKey] = operation.legacyFingerprint;
+          saveUiPreferences();
+          continue;
+        }
+        if (!["append", "import_legacy", "assign_legacy"].includes(operation.operation)
+            && EftRouteTools.fingerprint(snapshot.strokes || []) !== operation.base_signature) {
+          operation.blocked = true;
+          operation.error = "路线已被其他窗口修改，请核对后重试或放弃此处未同步修改。";
+          saveUiPreferences();
+          continue;
+        }
+        const { base_signature, blocked, error, legacyKey, legacyFingerprint, ...payload } = operation;
+        const response = await post("/api/map/drawings", { ...payload, base_revision: snapshot.revision });
+        if (owner !== uiPreferenceScopeId) break;
+        cacheRouteResponse(response, key);
+        uiPreferences.routePendingOperations = uiPreferences.routePendingOperations.filter(entry => entry.operation_id !== operation.operation_id);
+        if (legacyKey) uiPreferences.legacyRoutesImported[legacyKey] = legacyFingerprint;
+        saveUiPreferences();
+      } catch (error) {
+        if (owner !== uiPreferenceScopeId || operation.source !== state.data_source) break;
+        if (error.status === 409 && ["append", "import_legacy", "assign_legacy"].includes(operation.operation)) {
+          routeReadError = "路线正在更新，稍后自动重试。";
+          break;
+        }
+        if (error.status >= 400 && error.status < 500) {
+          operation.blocked = true;
+          operation.error = error.message;
+          saveUiPreferences();
+        } else routeReadError = "连接暂时中断，未同步的路线修改已保留在本机。";
+        break;
+      }
+    }
+  } finally {
+    routeFlushRunning = false;
+    if (owner === uiPreferenceScopeId && !activeMapDrawing) renderMapDrawings();
+  }
+}
+
+function importLegacyMapRoutes(scope) {
+  for (const [key, strokes] of Object.entries(uiPreferences?.mapDrawings || {})) {
+    if (key.startsWith("route-v2:")) continue;
+    const legacyScope = EftRouteTools.parseScopeKey(key);
+    if (legacyScope?.source !== scope.source || legacyScope.map_id !== scope.map_id) continue;
+    const normalized = EftRouteTools.normalizeStrokes(strokes);
+    if (!normalized.length) continue;
+    const fingerprint = EftRouteTools.fingerprint(normalized);
+    if (uiPreferences.legacyRoutesImported[key] === fingerprint
+        || uiPreferences.routePendingOperations.some(operation => operation.legacyKey === key)) continue;
+    queueRouteOperation("import_legacy", legacyScope, { strokes: normalized, legacyKey: key, legacyFingerprint: fingerprint });
+  }
+}
+
+async function syncCurrentMapRoutes() {
+  if (!uiPreferences || !state || !mapView?.floor?.key || mapView.reference_only || mapView.reference_material
+      || !["tarkov.dev", "eftarkov"].includes(mapView.source_provider) || mapView.source_provider !== state.data_source) return;
+  const scope = currentRouteScope();
+  const key = EftRouteTools.scopeKey(scope);
+  const owner = uiPreferenceScopeId;
+  const readKey = `${owner}:${key}`;
+  if (routeReads.has(readKey)) return;
+  const job = readMapRoutes(scope).then(response => {
+    if (!response || owner !== uiPreferenceScopeId) return;
+    importLegacyMapRoutes(scope);
+    if (key === currentMapDrawingId() && !activeMapDrawing) renderMapDrawings();
+  }).catch(error => {
+    if (owner === uiPreferenceScopeId) {
+      routeReadError = error.status === 401 ? "本地服务会话已失效。" : "连接暂时中断，仍保留已缓存及未同步路线。";
+      updateMapDrawingButtons();
+    }
+  }).finally(() => routeReads.delete(readKey));
+  routeReads.set(readKey, job);
+  await job;
+  flushRouteOperations();
 }
 
 function updateMapDrawingButtons() {
-  const hasMap = Boolean(mapView && !elements.mapImage.hidden);
-  const hasDrawings = mapDrawingStrokes().length > 0;
+  const reference = Boolean(mapView?.reference_material || mapView?.reference_only);
+  const hasMap = Boolean(mapView && !reference && !elements.mapImage.hidden);
+  const hasDrawings = hasMap && mapDrawingStrokes().length > 0;
   elements.mapDrawButton.disabled = !hasMap;
   elements.mapUndoDrawingButton.disabled = !hasDrawings;
   elements.mapClearDrawingsButton.disabled = !hasDrawings;
+  elements.mapDrawingColor.disabled = !hasMap;
+  elements.mapDrawingWidth.disabled = !hasMap;
+  const key = currentMapDrawingId();
+  const pending = (uiPreferences?.routePendingOperations || []).filter(operation => routeOperationKey(operation) === key);
+  const blocked = pending.find(operation => operation.blocked);
+  const legacyCount = Number(routeStates.get(key)?.legacy_count || 0);
+  elements.assignLegacyRoutes.hidden = !legacyCount || !hasMap;
+  elements.assignLegacyRoutes.textContent = currentLanguage === "en"
+    ? `Assign ${legacyCount} legacy routes to this floor` : `将 ${legacyCount} 条旧路线归入本楼层`;
+  elements.mapDrawingColor.parentElement.querySelector("span").textContent = currentLanguage === "en" ? "Color" : "颜色";
+  elements.mapDrawingColor.setAttribute("aria-label", currentLanguage === "en" ? "Route color" : "路线颜色");
+  elements.mapDrawingWidth.setAttribute("aria-label", currentLanguage === "en" ? "Route width" : "路线粗细");
+  [...elements.mapDrawingWidth.options].forEach((option, index) => {
+    option.textContent = (currentLanguage === "en" ? ["Thin", "Medium", "Thick"] : ["细", "中", "粗"])[index];
+  });
+  elements.retryRoutes.textContent = currentLanguage === "en" ? "Retry changes" : "重试修改";
+  elements.discardRoutes.textContent = currentLanguage === "en" ? "Discard unsynced changes" : "放弃未同步修改";
+  elements.retryRoutes.hidden = reference || !blocked;
+  elements.discardRoutes.hidden = reference || !blocked;
+  elements.mapRouteStatus.dataset.state = blocked ? "error" : pending.length || routeReadError ? "pending" : "ready";
+  elements.mapRouteStatus.textContent = reference
+    ? (currentLanguage === "en" ? "Reference image · Route drawing and sync disabled" : "参考原图 · 不绘线、不同步路线")
+    : blocked?.error || routeReadError || (pending.length
+    ? (currentLanguage === "en" ? `Syncing ${pending.length} route changes…` : `正在同步 ${pending.length} 项路线修改…`)
+    : legacyCount ? (currentLanguage === "en" ? `${legacyCount} legacy routes need a floor assignment.` : `${legacyCount} 条旧路线尚未记录楼层，已安全保留。`)
+      : !routeStates.has(key) && hasMap ? (currentLanguage === "en" ? "Loading routes…" : "正在读取路线…")
+        : !mapView ? (currentLanguage === "en" ? "Routes follow the selected map" : "地图载入后同步路线")
+          : currentLanguage === "en" ? "Routes synced · Mobile is read-only" : "路线已同步 · 手机只读查看");
 }
 
-function appendMapDrawingStroke(points) {
-  if (points.length < 2) return;
-  const pathData = points.map((point, index) => {
-    const command = index === 0 ? "M" : "L";
-    return command + (point[0] * 100).toFixed(3) + " " + (point[1] * 100).toFixed(3);
-  }).join(" ");
-  const outline = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  outline.setAttribute("d", pathData);
-  outline.setAttribute("fill", "none");
-  outline.setAttribute("stroke", "#ffffff");
-  outline.setAttribute("stroke-opacity", "0.78");
-  outline.setAttribute("stroke-width", "0.62");
-  outline.setAttribute("stroke-linecap", "round");
-  outline.setAttribute("stroke-linejoin", "round");
-  outline.setAttribute("vector-effect", "non-scaling-stroke");
-  const line = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  line.setAttribute("d", pathData);
-  line.setAttribute("fill", "none");
-  line.setAttribute("stroke", "#e5484d");
-  line.setAttribute("stroke-width", "0.3");
-  line.setAttribute("stroke-linecap", "round");
-  line.setAttribute("stroke-linejoin", "round");
-  line.setAttribute("vector-effect", "non-scaling-stroke");
-  elements.mapDrawings.append(outline, line);
-  return { outline, line };
+function appendMapDrawingStroke(stroke) {
+  return EftRouteTools.appendStroke(elements.mapDrawings, stroke, mapZoom);
 }
 
 function renderMapDrawings() {
   elements.mapDrawings.replaceChildren();
-  for (const stroke of mapDrawingStrokes()) appendMapDrawingStroke(stroke);
+  const visible = Boolean(mapView && !mapView.reference_only && !mapView.reference_material
+    && String(mapView.map_id) === elements.mapSelect.value);
+  elements.mapDrawings.style.visibility = visible ? "" : "hidden";
+  if (visible) for (const stroke of mapDrawingStrokes()) appendMapDrawingStroke(stroke);
   activeMapDrawingElement = null;
   updateMapDrawingButtons();
 }
 
 function setMapDrawingMode(enabled) {
-  const nextEnabled = Boolean(enabled && mapView && !elements.mapImage.hidden);
+  const nextEnabled = Boolean(enabled && mapView && !mapView.reference_material && !mapView.reference_only && !elements.mapImage.hidden);
   if (!nextEnabled && activeMapDrawing) endMapDrawing(null, false);
   mapDrawingEnabled = nextEnabled;
   elements.mapImageFrame.classList.toggle("is-drawing", mapDrawingEnabled);
@@ -3893,7 +4328,7 @@ function updateActiveMapDrawingPath() {
     return command + (point[0] * 100).toFixed(3) + " " + (point[1] * 100).toFixed(3);
   }).join(" ");
   if (!activeMapDrawingElement) {
-    activeMapDrawingElement = appendMapDrawingStroke(activeMapDrawing.points);
+    activeMapDrawingElement = appendMapDrawingStroke(activeMapDrawing);
     return;
   }
   activeMapDrawingElement.outline.setAttribute("d", pathData);
@@ -3901,10 +4336,11 @@ function updateActiveMapDrawingPath() {
 }
 
 function startMapDrawing(event) {
-  if (!mapDrawingEnabled || event.button !== 0 || !mapView) return;
+  if (!mapDrawingEnabled || event.button !== 0 || !mapView || mapView.reference_material || mapView.reference_only) return;
   const point = mapPointFromPointer(event);
   if (!point) return;
-  activeMapDrawing = { pointerId: event.pointerId, mapId: currentMapDrawingId(), points: [point] };
+  activeMapDrawing = { id: crypto.randomUUID(), pointerId: event.pointerId, mapId: currentMapDrawingId(), points: [point],
+    color: elements.mapDrawingColor.value, width: Number(elements.mapDrawingWidth.value) };
   activeMapDrawingElement = null;
   elements.mapImageFrame.setPointerCapture(event.pointerId);
   event.preventDefault();
@@ -3938,13 +4374,10 @@ function endMapDrawing(event, commit = true) {
   }
   if (commit && drawing.points.length > 1 && drawing.mapId === currentMapDrawingId() && uiPreferences) {
     const before = captureMapDrawingUndoSnapshot(drawing.mapId);
-    const strokes = uiPreferences.mapDrawings[drawing.mapId] || [];
-    strokes.push(drawing.points);
-    delete uiPreferences.mapDrawings[drawing.mapId];
-    uiPreferences.mapDrawings[drawing.mapId] = strokes.slice(-MAP_DRAWING_MAX_STROKES_PER_MAP);
-    uiPreferences.mapDrawings = sanitizeMapDrawings(uiPreferences.mapDrawings);
-    recordMapDrawingOperation("新增手绘线条：" + operationMapName(drawing.mapId), before);
-    saveUiPreferences();
+    if (mapDrawingStrokes(drawing.mapId).length >= MAP_DRAWING_MAX_STROKES_PER_MAP) toast("当前楼层已有 40 条路线，请先撤销或清除部分线条。");
+    else if (queueRouteOperation("append", EftRouteTools.parseScopeKey(drawing.mapId), { stroke: EftRouteTools.normalizeStroke(drawing) })) {
+      recordMapDrawingOperation("新增手绘线条：" + operationMapName(drawing.mapId), before);
+    }
   }
   renderMapDrawings();
 }
@@ -3954,8 +4387,7 @@ function undoMapDrawing() {
   const strokes = mapDrawingStrokes(mapId);
   if (!strokes.length || !uiPreferences) return;
   const before = captureMapDrawingUndoSnapshot(mapId);
-  strokes.pop();
-  if (!strokes.length) delete uiPreferences.mapDrawings[mapId];
+  queueRouteOperation("undo");
   recordMapDrawingOperation("撤销手绘线条：" + operationMapName(mapId), before);
   saveUiPreferences();
   renderMapDrawings();
@@ -3965,9 +4397,9 @@ function clearMapDrawings() {
   const mapId = currentMapDrawingId();
   const strokes = mapDrawingStrokes(mapId);
   if (!strokes.length || !uiPreferences) return;
-  if (!window.confirm("清除当前地图上的全部手绘线条？可在处理记录中撤销。")) return;
+  if (!window.confirm("清除当前楼层上的全部手绘线条？可在处理记录中撤销。")) return;
   const before = captureMapDrawingUndoSnapshot(mapId);
-  delete uiPreferences.mapDrawings[mapId];
+  queueRouteOperation("clear");
   recordMapDrawingOperation("清除手绘线条：" + operationMapName(mapId), before);
   saveUiPreferences();
   renderMapDrawings();
@@ -4002,15 +4434,61 @@ function buildMapPointRow(marker, pointHidden) {
   return row;
 }
 
+function mapTaskPointMessage(context) {
+  if (!context || context.point_status === "matched") return "";
+  if (currentLanguage !== "en") return context.point_message || "当前来源尚无可验证点位，任务与进度已保留。";
+  const messages = {
+    reference_only: "This source has no verified quest coordinates. Your objectives and progress are retained.",
+    catalog_unavailable: "This source's quest catalog is not ready. Your objectives and progress are retained.",
+    unmatched: "No exact quest ID match in this source. Your original objectives and progress are retained.",
+    loading: "Loading quest coordinates from this source. Your objectives and progress are retained.",
+    no_points: "No verified coordinates for this quest on this map. Your objectives and progress are retained.",
+  };
+  const message = messages[context.point_status] || "Your original objectives and progress are retained.";
+  return context.map_relevant === null ? `${message} Map association is not yet confirmed.` : message;
+}
+
+function mapTaskDisplayEntries(markers, tasks, contexts) {
+  const relevantContexts = new Map((contexts || [])
+    .filter((context) => context.map_relevant !== false && context.point_status !== "other_map")
+    .map((context) => [String(context.id), context]));
+  const entries = groupMapMarkers(markers.filter((marker) => marker.point_kind !== "local"), tasks);
+  const markedTaskIds = new Set(entries.map((entry) => entry.groupKey));
+  const taskOrder = new Map(tasks.map((task, index) => [String(task.id), index]));
+  tasks.forEach((task, index) => {
+    const key = String(task.id);
+    if (!relevantContexts.has(key) || markedTaskIds.has(key) || task.state === "complete") return;
+    entries.push({
+      task_id: task.id,
+      task_title: task.title,
+      groupKey: key,
+      taskColor: MAP_TASK_COLORS[index % MAP_TASK_COLORS.length],
+      taskShape: MAP_TASK_SHAPES[index % MAP_TASK_SHAPES.length],
+      contextOnly: true,
+    });
+  });
+  entries.sort((left, right) => (taskOrder.get(left.groupKey) ?? Number.MAX_SAFE_INTEGER)
+    - (taskOrder.get(right.groupKey) ?? Number.MAX_SAFE_INTEGER));
+  const groupNumbers = new Map();
+  for (const entry of entries) {
+    if (!groupNumbers.has(entry.groupKey)) groupNumbers.set(entry.groupKey, groupNumbers.size + 1);
+    entry.groupNumber = groupNumbers.get(entry.groupKey);
+  }
+  return entries;
+}
+
 function renderMapTargets(markers, tasks = []) {
+  if (mapView?.reference_material || mapView?.reference_only) markers = [];
   hideMapTooltip();
   elements.mapTargetList.replaceChildren();
   elements.mapMarkers.replaceChildren();
   const tasksById = new Map((state?.tasks || []).map((task) => [String(task.id), task]));
-  const groupedMarkers = groupMapMarkers(markers.filter((marker) => marker.point_kind !== "local"), orderedTasks(tasks));
-  const keyVisibleMarkers = groupedMarkers.filter((marker) => (
+  const contextsById = new Map((mapView?.task_contexts || []).map((context) => [String(context.id), context]));
+  const entries = mapTaskDisplayEntries(markers, orderedTasks(tasks), mapView?.task_contexts);
+  const keyVisibleEntries = entries.filter((marker) => (
     ![...(taskKeyIdsByTask.get(marker.groupKey) || [])].some((keyId) => hiddenKeyIds.has(keyId))
   ));
+  const keyVisibleMarkers = keyVisibleEntries.filter((entry) => !entry.contextOnly);
   const taskVisibleMarkers = keyVisibleMarkers.filter((marker) => !hiddenTaskIds.has(marker.groupKey));
   const visibleMarkers = taskVisibleMarkers.filter((marker) => !hiddenMapPointIds.has(currentMapPointKey(marker)));
   const offsets = mapMarkerOffsets(visibleMarkers);
@@ -4018,7 +4496,7 @@ function renderMapTargets(markers, tasks = []) {
     `${marker.groupKey}:${marker.pointNumber}`,
     offsets[index],
   ]));
-  if (!keyVisibleMarkers.length) {
+  if (!keyVisibleEntries.length) {
     const empty = document.createElement("div");
     empty.className = "empty-state";
     empty.textContent = "当前地图暂无已追踪任务的自动点位。资料库中有可验证坐标时，会自动显示在这里。";
@@ -4026,13 +4504,15 @@ function renderMapTargets(markers, tasks = []) {
   }
   let currentGroupKey = "";
   let currentGroupContent = null;
-  for (const marker of keyVisibleMarkers) {
+  for (const marker of keyVisibleEntries) {
     if (marker.groupKey !== currentGroupKey) {
       currentGroupKey = marker.groupKey;
       const groupCard = document.createElement("section");
       const groupHeading = document.createElement("div");
       const isHidden = hiddenTaskIds.has(marker.groupKey);
       groupCard.className = `task-card map-task-card${isHidden ? " is-hidden" : ""}`;
+      groupCard.dataset.taskId = marker.groupKey;
+      groupCard.dataset.pointStatus = contextsById.get(marker.groupKey)?.point_status || "matched";
       groupHeading.className = "map-task-group";
       const swatch = document.createElement("span");
       swatch.className = "map-task-swatch";
@@ -4062,7 +4542,9 @@ function renderMapTargets(markers, tasks = []) {
       count.className = "map-task-group-count";
       const groupPointCount = keyVisibleMarkers.filter((entry) => entry.groupKey === marker.groupKey).length;
       const displayedPointCount = visibleMarkers.filter((entry) => entry.groupKey === marker.groupKey).length;
-      count.textContent = `${displayedPointCount}/${groupPointCount} 个地图标点`;
+      count.textContent = marker.contextOnly
+        ? (currentLanguage === "en" ? "No verified pins" : "暂无可验证标点")
+        : `${displayedPointCount}/${groupPointCount} 个地图标点`;
       const visibility = document.createElement("button");
       visibility.type = "button";
       visibility.className = "button button-secondary button-small map-task-visibility";
@@ -4121,6 +4603,13 @@ function renderMapTargets(markers, tasks = []) {
       if (groupTask?.requirements?.length) {
         groupContent.append(buildTaskRequirementList(groupTask, true));
       }
+      const pointMessage = mapTaskPointMessage(contextsById.get(marker.groupKey));
+      if (pointMessage) {
+        const notice = document.createElement("p");
+        notice.className = "map-task-point-status";
+        notice.textContent = pointMessage;
+        groupContent.prepend(notice);
+      }
       collapseButton.addEventListener("click", () => {
         const nextCollapsed = !collapsedMapTaskGroups.has(collapseKey);
         if (nextCollapsed) collapsedMapTaskGroups.add(collapseKey);
@@ -4133,6 +4622,7 @@ function renderMapTargets(markers, tasks = []) {
       groupCard.append(groupHeading, groupContent);
       elements.mapTargetList.append(groupCard);
     }
+    if (marker.contextOnly) continue;
     const taskHidden = hiddenTaskIds.has(marker.groupKey);
     const pointHidden = hiddenMapPointIds.has(currentMapPointKey(marker));
     let pin = null;
@@ -4189,7 +4679,8 @@ function renderMapTargets(markers, tasks = []) {
     currentGroupContent?.append(buildMapPointRow(marker, pointHidden));
   }
   renderMapAnnotations();
-  const taskCount = new Set(taskVisibleMarkers.map((marker) => marker.groupKey)).size;
+  const taskCount = new Set(keyVisibleEntries.filter((entry) => !hiddenTaskIds.has(entry.groupKey))
+    .map((entry) => entry.groupKey)).size;
   const hiddenPointCount = taskVisibleMarkers.length - visibleMarkers.length;
   elements.mapSummary.textContent = currentLanguage === "en"
     ? `${mapView?.map_name_en || mapView?.map_name || "Map"} · ${taskCount} visible quest groups · ${visibleMarkers.length} map markers${hiddenPointCount ? ` · ${hiddenPointCount} hidden` : ""}`
@@ -4204,6 +4695,7 @@ function setMapZoom(value, persist = true) {
   elements.mapZoomOutButton.disabled = mapZoom <= MAP_ZOOM_MIN;
   elements.mapZoomInButton.disabled = mapZoom >= MAP_ZOOM_MAX;
   elements.mapZoomResetButton.disabled = mapZoom === 1;
+  if (!activeMapDrawing) renderMapDrawings();
   if (persist) saveUiPreferences();
 }
 
@@ -4266,15 +4758,17 @@ async function loadMapView(requestedFloorKey = "") {
   const mapId = elements.mapSelect.value;
   if (!mapId) return;
   if (activeMapDrawing) endMapDrawing(null, false);
+  setMapDrawingMode(false);
   const generation = ++mapViewGeneration;
-  const params = new URLSearchParams({ map_id: mapId });
-  const floorKey = requestedFloorKey || uiPreferences?.selectedMapFloors?.[mapId] || "";
+  const params = new URLSearchParams({ map_id: mapId, source: state?.data_source || "tarkov.dev" });
+  const floorKey = requestedFloorKey || uiPreferences?.selectedMapFloors?.[sourceMapPreferenceId(mapId)] || "";
   if (floorKey) params.set("floor", floorKey);
   if (mapView?.map_id !== mapId) {
     elements.mapFloorSelect.replaceChildren();
     elements.mapFloorSelect.disabled = true;
   }
   elements.mapImage.hidden = true;
+  elements.mapDrawings.style.visibility = "hidden";
   updateMapDrawingButtons();
   elements.mapPlaceholder.hidden = false;
   elements.mapPlaceholder.textContent = "正在载入地图任务点位…";
@@ -4282,6 +4776,10 @@ async function loadMapView(requestedFloorKey = "") {
     const result = await request(`/api/map?${params}`);
     if (generation !== mapViewGeneration) return;
     mapView = result;
+    if (result.reference_material || result.reference_only) {
+      result.markers = [];
+      result.annotations = [];
+    }
     const floors = result.floors || [];
     elements.mapFloorSelect.replaceChildren();
     for (const floor of floors) {
@@ -4290,18 +4788,25 @@ async function loadMapView(requestedFloorKey = "") {
       option.dataset.nameZh = floor.name || `楼层 ${floor.key}`;
       option.dataset.nameEn = floor.name_en || floor.name || `Floor ${floor.key}`;
       option.textContent = currentLanguage === "en" ? option.dataset.nameEn : option.dataset.nameZh;
+      if (floor.available === false) {
+        option.disabled = true;
+        option.textContent += currentLanguage === "en" ? " · unavailable (source rules)" : " · 不可用（来源规则）";
+      }
       elements.mapFloorSelect.append(option);
     }
     elements.mapFloorSelect.value = String(result.floor?.key || "");
     elements.mapFloorSelect.disabled = floors.length <= 1;
     if (result.floor?.key && uiPreferences) {
-      uiPreferences.selectedMapFloors[result.map_id] = String(result.floor.key);
+      uiPreferences.selectedMapFloors[sourceMapPreferenceId(result.map_id)] = String(result.floor.key);
       saveUiPreferences();
     }
     const activeMarkers = (result.markers || []).filter((marker) => marker.point_kind !== "local");
     const activeTaskIds = new Set(activeMarkers
       .filter((marker) => marker.task_id != null)
       .map((marker) => String(marker.task_id)));
+    for (const context of result.task_contexts || []) {
+      if (context.map_relevant !== false && context.point_status !== "other_map") activeTaskIds.add(String(context.id));
+    }
     const mapOption = [...elements.mapSelect.options].find((option) => option.value === String(result.map_id));
     if (mapOption) {
       mapOption.dataset.mapName = result.map_name || "";
@@ -4325,13 +4830,36 @@ async function loadMapView(requestedFloorKey = "") {
     }
     if (state) updateTaskMapFilterOptions(state.tasks);
     elements.mapSourceLink.href = result.source_url;
-    elements.mapSourceLink.textContent = currentLanguage === "en" ? "Tarkov.dev map source" : "Tarkov.dev 地图来源";
+    elements.mapSourceLink.textContent = (mapView?.source_label || "Tarkov.dev") + (currentLanguage === "en" ? " map source" : " 地图来源");
     updateMapArtworkAttribution();
     renderMapTargets(result.markers || [], result.tasks || []);
     renderMapDrawings();
+    syncCurrentMapRoutes();
+    elements.dataSourceNotice.textContent = [result.source_notice, result.cache_warning].filter(Boolean).join(" ");
+    if (result.reference_only) {
+      elements.mapImage.removeAttribute("src");
+      elements.mapImage.hidden = true;
+      elements.mapMarkers.replaceChildren();
+      elements.mapPlaceholder.hidden = false;
+      elements.mapPlaceholder.textContent = result.availability_notice
+        || "该来源暂无允许读取的原图。可手动查看上方来源页面；不叠加其他来源坐标。";
+      elements.mapSummary.textContent = `RE3MR · ${elements.mapSummary.textContent}`;
+      elements.mapHint.textContent = [result.source_notice, result.availability_notice, result.cache_warning].filter(Boolean).join(" ");
+      updateMapDrawingButtons();
+      return;
+    }
     elements.mapImage.hidden = false;
     elements.mapImage.onload = () => {
       if (generation !== mapViewGeneration) return;
+      const width = elements.mapImage.naturalWidth;
+      const height = elements.mapImage.naturalHeight;
+      if (result.floor && width > 0 && height > 0) {
+        result.floor.width = width;
+        result.floor.height = height;
+        elements.mapCanvas.style.aspectRatio = `${width} / ${height}`;
+        renderMapTargets(result.markers || [], result.tasks || []);
+        renderMapDrawings();
+      }
       elements.mapPlaceholder.hidden = true;
       updateMapDrawingButtons();
     };
@@ -4339,15 +4867,20 @@ async function loadMapView(requestedFloorKey = "") {
       if (generation !== mapViewGeneration) return;
       elements.mapImage.hidden = true;
       elements.mapPlaceholder.hidden = false;
-      elements.mapPlaceholder.textContent = "任务点位已读取，但 Tarkov.dev 底图暂时无法加载；请检查网络后重试。";
+      elements.mapPlaceholder.textContent = result.reference_material
+        ? "高清参考图暂时无法读取；可能是网络超时或来源访问限制。原任务与进度保留，详细原因可在存档与缓存中查看。"
+        : "任务点位已读取，但当前来源底图暂时无法加载；请检查网络后重试。";
       updateMapDrawingButtons();
     };
+    const width = Number(result.floor?.width);
+    const height = Number(result.floor?.height);
+    elements.mapCanvas.style.aspectRatio = width > 0 && height > 0 ? `${width} / ${height}` : "auto";
     elements.mapImage.src = result.image_url;
     const detailWarnings = result.detail_warnings || mapDetailWarnings;
     const hasMarkers = (result.markers || []).some((marker) => marker.point_kind !== "local");
     const hasAnnotations = (result.annotations || []).length > 0;
     const mapHintText = detailWarnings.length
-      ? `部分任务详情暂时未能读取，自动点位可能不完整：${detailWarnings.join("、")}`
+      ? `部分任务详情正在补取或暂时无法读取，自动点位可能不完整：${detailWarnings.join("、")}`
       : hasMarkers
         ? "左键编号标记查看点位信息，右键切换到访勾选（勾显示在标记右下角）；右侧可隐藏单个点或查看全部说明图片。悬停撤离/转移标记可立即查看名称和楼层。"
         : hasAnnotations
@@ -4361,7 +4894,9 @@ async function loadMapView(requestedFloorKey = "") {
         ? `${unplacedCount} map annotation(s) outside the basemap bounds were omitted.`
         : `${unplacedCount} 个超出底图范围的地图标注已略过。`
       : "";
-    elements.mapHint.textContent = [mapBoundsWarning, mapHintText].filter(Boolean).join(" ");
+    elements.mapHint.textContent = result.reference_material
+      ? [result.source_notice, result.cache_warning, ...(result.detail_warnings || []), "参考原图可缩放、拖拽、全屏及切换楼层；不叠加其他来源任务标点或路线。右侧保留同地图任务及原进度。"].filter(Boolean).join(" ")
+      : [mapBoundsWarning, mapHintText].filter(Boolean).join(" ");
   } catch (error) {
     if (generation !== mapViewGeneration) return;
     mapView = null;
@@ -4494,24 +5029,43 @@ function activeTaskIdSignature(tasks) {
     .join("|");
 }
 
-async function refreshState() {
+function refreshState() {
+  if (!stateRefreshJob) stateRefreshJob = refreshStateOnce().finally(() => { stateRefreshJob = null; });
+  return stateRefreshJob;
+}
+
+async function refreshStateOnce() {
   try {
+    const datasetScopeId = datasetUiPreferenceScope(await request("/api/save-data"));
+    if (datasetScopeId !== uiPreferenceDatasetScopeId) {
+      uiPreferenceScopeId = null;
+      uiPreferences = null;
+      preferenceSync?.deactivate();
+      uiPreferenceDatasetScopeId = datasetScopeId;
+    }
     const previousPlayerId = state?.player?.id;
     const previousProfileId = state?.selected_profile_id;
+    const previousSource = state?.data_source;
+    const previousMapRevision = state?.map_data_revision;
     const previousTaskIds = state ? activeTaskIdSignature(state.tasks) : null;
     state = await request("/api/state");
     if (String(previousPlayerId || "") !== String(state.player?.id || "")) {
       await activateScreenshotFolder(state.player?.id);
     }
-    const profileChanged = activateProfileUiPreferences(
+    const profileChanged = await activateProfileUiPreferences(
       state.player?.id,
       state.selected_profile_id,
       Boolean(state.player?.is_admin),
     );
+    if (!profileChanged) preferenceSync?.retry();
     const mapTaskMembershipChanged = previousTaskIds !== null
       && previousPlayerId === state.player?.id
       && previousProfileId === state.selected_profile_id
       && previousTaskIds !== activeTaskIdSignature(state.tasks);
+    const sourceChanged = previousSource !== state.data_source;
+    elements.dataSourceSelect.value = state.data_source || "tarkov.dev";
+    elements.dataSourceSelect.disabled = Boolean(state.catalog_busy);
+    elements.dataSourceNotice.textContent = [state.source_notice, state.cache_warning].filter(Boolean).join(" ");
     setConnection(true);
     renderProfiles(state.profiles, state.selected_profile_id);
     openInitialProfileNameDialog();
@@ -4519,12 +5073,19 @@ async function refreshState() {
     renderAnalysis();
     renderScreenshotCandidates();
     renderCatalogSummary();
-    if (profileChanged) {
+    if (profileChanged || sourceChanged) {
+      mapViewGeneration += 1;
+      mapView = null;
+      selectedCatalogTask = null;
+      elements.catalogPreview.hidden = true;
+      elements.catalogResults.replaceChildren();
       await loadMapIndex({ restorePreferences: true });
+      restoringUiPreferences = false;
+      saveUiPreferences();
       if (hideoutCatalog) renderHideoutPlanner();
     } else {
       renderTasks(state.tasks);
-      if (mapTaskMembershipChanged) loadMapIndex({ preserveSelection: true });
+      if (mapTaskMembershipChanged || previousMapRevision !== state.map_data_revision) loadMapIndex({ preserveSelection: true });
     }
     if (!hideoutCatalog && !hideoutLoading) loadHideoutCatalog();
     if (state.capture.available && state.capture.id && state.capture.id !== loadedCaptureId) {
@@ -4533,6 +5094,11 @@ async function refreshState() {
       clearScreenshotPreview();
     }
   } catch (error) {
+    uiPreferenceScopeId = null;
+    uiPreferenceDatasetScopeId = null;
+    uiPreferences = null;
+    preferenceSync?.deactivate();
+    restoringUiPreferences = false;
     if (error.status !== 401) {
       setConnection(false);
       elements.analysis.textContent = error.message;
@@ -4860,7 +5426,13 @@ document.querySelector("#refreshLogsButton").addEventListener("click", refreshLo
 elements.mobileCompanionButton.addEventListener("click", openMobilePairing);
 elements.closeMobilePairingButton.addEventListener("click", closeMobilePairing);
 elements.refreshMobilePairingButton.addEventListener("click", generateMobilePairing);
-elements.mobilePairingAddress.addEventListener("change", generateMobilePairing);
+elements.mobilePairingAddress.addEventListener("change", () => {
+  if (uiPreferences) {
+    uiPreferences.mobilePairingAddress = elements.mobilePairingAddress.value;
+    saveUiPreferences();
+  }
+  generateMobilePairing({ rememberSelection: true });
+});
 elements.mobilePairingDialog.addEventListener("close", revokeMobilePairing);
 elements.mobilePairingDialog.addEventListener("click", (event) => {
   if (event.target === elements.mobilePairingDialog) closeMobilePairing();
@@ -4870,6 +5442,23 @@ elements.mapAnnotationFilters.addEventListener("change", (event) => {
   saveUiPreferences();
   renderMapTargets(mapView?.markers || [], mapView?.tasks || []);
 });
+elements.dataSourceSelect.addEventListener("change", async () => {
+  const source = elements.dataSourceSelect.value;
+  elements.dataSourceSelect.disabled = true;
+  mapViewGeneration += 1;
+  if (activeMapDrawing) endMapDrawing(null, false);
+  setMapDrawingMode(false);
+  try {
+    await post("/api/data-source", { source });
+    await refreshState();
+  } catch (error) {
+    toast("切换失败：" + error.message);
+    elements.dataSourceSelect.value = state?.data_source || "tarkov.dev";
+  } finally {
+    elements.dataSourceSelect.disabled = Boolean(state?.catalog_busy);
+  }
+});
+
 elements.mapSelect.addEventListener("change", () => {
   setMapDrawingMode(false);
   if (elements.taskMapFilter.value !== elements.mapSelect.value) {
@@ -4883,14 +5472,53 @@ elements.mapSelect.addEventListener("change", () => {
 elements.mapFloorSelect.addEventListener("change", () => {
   if (!elements.mapFloorSelect.value) return;
   if (uiPreferences) {
-    uiPreferences.selectedMapFloors[elements.mapSelect.value] = elements.mapFloorSelect.value;
+    uiPreferences.selectedMapFloors[sourceMapPreferenceId(elements.mapSelect.value)] = elements.mapFloorSelect.value;
     saveUiPreferences();
   }
   loadMapView(elements.mapFloorSelect.value);
 });
 elements.mapDrawButton.addEventListener("click", () => setMapDrawingMode(!mapDrawingEnabled));
+elements.mapDrawingColor.addEventListener("change", () => {
+  if (!uiPreferences) return;
+  uiPreferences.routeStyle.color = elements.mapDrawingColor.value;
+  saveUiPreferences();
+});
+elements.mapDrawingWidth.addEventListener("change", () => {
+  if (!uiPreferences) return;
+  uiPreferences.routeStyle.width = Number(elements.mapDrawingWidth.value);
+  saveUiPreferences();
+});
+elements.assignLegacyRoutes.addEventListener("click", () => {
+  if (!window.confirm("旧路线没有保存楼层信息。确认将这些旧路线归入当前楼层？")) return;
+  queueRouteOperation("assign_legacy");
+});
+elements.retryRoutes.addEventListener("click", () => {
+  const key = currentMapDrawingId();
+  for (const operation of uiPreferences?.routePendingOperations || []) {
+    if (routeOperationKey(operation) !== key) continue;
+    operation.blocked = false;
+    operation.base_signature = EftRouteTools.fingerprint(routeStates.get(key)?.strokes || []);
+  }
+  saveUiPreferences();
+  flushRouteOperations();
+});
+elements.discardRoutes.addEventListener("click", () => {
+  if (!uiPreferences || !window.confirm("放弃当前楼层尚未同步的路线修改？已经保存的路线会保留。")) return;
+  const key = currentMapDrawingId();
+  uiPreferences.routePendingOperations = uiPreferences.routePendingOperations.filter(operation => routeOperationKey(operation) !== key);
+  saveUiPreferences();
+  renderMapDrawings();
+});
 elements.mapUndoDrawingButton.addEventListener("click", undoMapDrawing);
 elements.mapClearDrawingsButton.addEventListener("click", clearMapDrawings);
+window.addEventListener("online", () => {
+  syncCurrentMapRoutes();
+  flushRouteOperations();
+});
+setInterval(() => {
+  syncCurrentMapRoutes();
+  flushRouteOperations();
+}, 2000);
 elements.closeMapPointImageButton.addEventListener("click", () => elements.mapPointImageDialog.close());
 elements.mapPointImageDialog.addEventListener("click", (event) => {
   if (event.target === elements.mapPointImageDialog) elements.mapPointImageDialog.close();

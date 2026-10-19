@@ -34,6 +34,7 @@
     </header>
 
     <section class="mobile-map-controls" aria-label="地图选择">
+      <details class="mobile-source-details"><summary id="mobileSourceLabel">地图来源与许可</summary><p id="mobileSourceNotice" class="mobile-source-notice" role="status"></p><a id="mobileSourceLink" class="mobile-source-link" target="_blank" rel="noopener noreferrer">地图来源与许可</a></details>
       <label class="map-select-wrap">
         <span>地图</span>
         <select id="mobileMapSelect" disabled aria-label="选择地图"><option>加载中…</option></select>
@@ -42,24 +43,26 @@
         <span title="切换楼层只更换底图，标点保持不变">楼层</span>
         <select id="mobileFloorSelect" disabled aria-label="选择楼层"><option>—</option></select>
       </label>
-      <details id="mobileAnnotationFilters" class="mobile-annotation-filters" aria-label="地图标注筛选" open>
+      <details id="mobileAnnotationFilters" class="mobile-annotation-filters" aria-label="地图标注筛选">
         <summary class="mobile-annotation-filter-heading">
           <span class="mobile-annotation-filter-title">地图标注</span>
           <span class="mobile-annotation-filter-chevron" aria-hidden="true"></span>
         </summary>
-        <label><input type="checkbox" data-map-annotation-filter="location" checked><span class="annotation-swatch is-location" aria-hidden="true"></span>地点</label>
+        <div class="mobile-annotation-options"><label><input type="checkbox" data-map-annotation-filter="location" checked><span class="annotation-swatch is-location" aria-hidden="true"></span>地点</label>
         <label><input type="checkbox" data-map-annotation-filter="pmc-exit"><span class="annotation-swatch is-pmc" aria-hidden="true"></span>PMC撤离</label>
         <label><input type="checkbox" data-map-annotation-filter="scav-exit"><span class="annotation-swatch is-scav" aria-hidden="true"></span>SCAV撤离</label>
-        <label><input type="checkbox" data-map-annotation-filter="transfer"><span class="annotation-swatch is-transfer" aria-hidden="true"></span>转移点</label>
+        <label><input type="checkbox" data-map-annotation-filter="transfer"><span class="annotation-swatch is-transfer" aria-hidden="true"></span>转移点</label></div>
       </details>
     </section>
 
     <section id="mobileMapViewport" class="mobile-map-viewport" aria-label="任务地图">
       <div id="mobileMapCanvas" class="mobile-map-canvas">
         <img id="mobileMapImage" alt="当前地图底图" draggable="false" hidden>
+        <svg id="mobileMapDrawings" class="mobile-map-drawings" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"></svg>
         <div id="mobileMapMarkers" class="mobile-map-markers"></div>
       </div>
       <div id="mobileMapLoading" class="mobile-map-loading">正在载入地图…</div>
+      <div id="mobileRouteStatus" class="mobile-route-status" role="status" aria-live="polite"></div>
       <button id="mobileImmersiveToggle" class="icon-button mobile-immersive-toggle" type="button" aria-label="沉浸显示地图" title="沉浸显示地图" aria-pressed="false">⛶</button>
       <div class="mobile-zoom-controls" role="group" aria-label="地图缩放">
         <button id="mobileZoomOut" class="icon-button" type="button" aria-label="缩小">−</button>
@@ -104,6 +107,7 @@
     </div>
   </dialog>
 
+  <script src="/assets/route_tools.js" defer></script>
   <script src="/assets/mobile.js" defer></script>
 </body>
 </html>

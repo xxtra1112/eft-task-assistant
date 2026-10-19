@@ -35,8 +35,9 @@ from catalog import (
     CatalogError,
     is_key_item_name,
 )
+from data_sources import (DEFAULT_SOURCE, SOURCE_URLS, SOURCE_LABELS, SOURCE_NOTICES, SourceAdapters, capabilities, validate_source)
 from diagnostics import configure_logging, log_event, log_path
-from point_images import supplement_verified_point_images
+from point_images import VERIFIED_POINT_PHOTOS, supplement_verified_point_images
 from hideout_data import get_hideout_catalog
 from tarkov_dev_catalog import fetch_tarkov_dev_catalog, fetch_tarkov_dev_task_detail
 from tarkov_dev_maps import (
@@ -51,11 +52,32 @@ from players import (
     PlayerAuthStore,
 )
 from recognition import MERCHANT_CARD_ORDER, PageAnalyzer, ScreenAnalysis, ScreenKind
+from route_storage import DrawingError, drawing_scope, normalize_operation, operation_uuid, profile_number, revision_number
 from storage import GAME_MODES, Profile, Task, TaskStore, default_database_path, normalize_text
+from network_candidates import discover_network_candidates, rank_network_candidates
+from preference_store import ProfilePreferences, PreferenceError
+from app_paths import configure_paths, public_cache_root
+from save_data import DataDirectoryLock, SaveDataError, add_data_dir_argument, resolve_data_dir
+from save_runtime import prepare_runtime, export_runtime_status, select_dataset, rollback_dataset
+from legacy_saves import discover_legacy_saves
+from default_paths import DefaultPathError, legacy_candidates
 from task_requirements import filter_assault_weapon_items
 
 
 MODE_LABELS = {"pve": "PvE", "regular": "PvP", "pvp-season": "赛季 PvP"}
+REEMR_MAP_IDS = {
+    "customs": {"56f40101d2720b2a4d8b45d6"},
+    "factory": {"55f2d3fd4bdc2d5f408b4567", "59fc81d786f774390775787e"},
+    "ground-zero": {"653e6760052c01c1c805532f", "65b8d6f5cdde2479cb2a3125"},
+    "icebreaker": {"69af492a4819ea4ba10a69c5"},
+    "interchange": {"5714dbc024597771384a510d"},
+    "labyrinth": {"6733700029c367a3d40b02af"},
+    "lighthouse": {"5704e4dad2720bb55b8b4567"},
+    "reserve": {"5704e5fad2720bc05b8b4567"},
+    "shoreline": {"5704e554d2720bac5b8b456e"},
+    "streetsoftarkov": {"5714dc692459777137212e12"},
+    "woods": {"5704e3c2d2720bac5b8b4567"},
+}
 WEB_ROOT = Path(__file__).parent / "web"
 SCREENSHOT_TASK_MATCH_THRESHOLD = 0.8
 SCREENSHOT_TASK_CJK_MATCH_THRESHOLD = 0.72
@@ -118,6 +140,19 @@ def _jpeg_dimensions(jpeg: bytes) -> tuple[int, int] | None:
     return None
 
 
+def _safe_image_url(value: Any) -> str:
+    value = str(value or "").strip()
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return ""
+    if (parsed.scheme != "https" or parsed.netloc != "assets.tarkov.dev"
+            or parsed.query or parsed.fragment or ".." in parsed.path.split("/")
+            or not re.fullmatch(r"/[A-Za-z0-9_./-]+\.(?:webp|png|jpe?g)", parsed.path, re.I)):
+        return ""
+    return value
+
+
 def _point_image_urls(*values: Any) -> list[str]:
     urls: list[str] = []
     for value in values:
@@ -125,18 +160,79 @@ def _point_image_urls(*values: Any) -> list[str]:
         for entry in entries:
             if isinstance(entry, dict):
                 entry = entry.get("url") or entry.get("src") or entry.get("image_url") or ""
-            image_url = str(entry or "").strip()
-            parsed = urlparse(image_url)
-            if (
-                parsed.scheme == "https"
-                and parsed.netloc == "www.eftarkov.com"
-                and re.fullmatch(r"/uploads/infoImg/[A-Za-z0-9._-]+\.(?:webp|png|jpe?g)", parsed.path, re.IGNORECASE)
-                and image_url not in urls
-            ):
+            image_url = _safe_image_url(entry)
+            if image_url and image_url not in urls:
                 urls.append(image_url)
                 if len(urls) >= 24:
                     return urls
     return urls
+
+
+def _catalog_images(task: dict[str, Any]) -> dict[str, Any]:
+    def clean(entry: dict[str, Any]) -> dict[str, Any]:
+        result = dict(entry)
+        for field in ("image_url", "icon_url", "source_image_url", "info_image_url"):
+            if field in result:
+                result[field] = _safe_image_url(result[field])
+        for field in ("source_image_urls", "info_image_urls"):
+            if field in result:
+                result[field] = _point_image_urls(result[field])
+        if "map_points" in result:
+            result["map_points"] = [clean(point) for point in result["map_points"] if isinstance(point, dict)]
+        return result
+    return {**clean(task), "key_requirements": [clean(key) for key in task.get("key_requirements", []) if isinstance(key, dict)]}
+
+
+def _catalog_provider(task: dict[str, Any]) -> str:
+    provider = task.get("data_provider", "")
+    if provider not in {"tarkov.dev", "eftarkov"}:
+        raise APIError("任务目录来源未确认，未读取其他来源资料。", 409)
+    return provider
+
+
+def _task_key_requirements(task: Task, history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    catalog = next((entry for entry in history if entry.get("details_loaded")), history[0] if history else {})
+    keys = []
+    name_ids: dict[str, set[str]] = {}
+    aliases: dict[str, set[str]] = {}
+    for entry in history:
+        for key in entry.get("key_requirements", []):
+            if not isinstance(key, dict):
+                continue
+            item_id = str(key.get("item_id", "")).strip().lower()
+            if not re.fullmatch(r"[0-9a-f]{24}", item_id):
+                continue
+            name = str(key.get("name", "")).strip().lower()
+            if name:
+                name_ids.setdefault(name, set()).add(item_id)
+            old_id = str(key.get("id", "")).strip().lower()
+            if old_id and old_id != item_id:
+                aliases.setdefault(old_id, set()).add(item_id)
+    objective_names = []
+    for line in task.objective.splitlines():
+        match = re.match(r"\s*(?:需要钥匙|钥匙)\s*[：:]\s*(.+?)\s*$", line, re.I)
+        if match and is_key_item_name(match.group(1)):
+            objective_names.append(match.group(1).strip())
+    for name in objective_names:
+        if name.lower() in name_ids:
+            aliases.setdefault(name.lower(), set()).update(name_ids[name.lower()])
+    source_items = filter_assault_weapon_items(catalog.get("objectives", []), catalog.get("key_requirements", []))
+    for key in source_items:
+        if not isinstance(key, dict) or not (key.get("item_kind") == "key" or is_key_item_name(str(key.get("name", "")))):
+            continue
+        item_id = str(key.get("item_id", "")).strip().lower()
+        canonical = bool(re.fullmatch(r"[0-9a-f]{24}", item_id))
+        keys.append({**key, "item_id": item_id if canonical else "", "item_kind": "key",
+                     "image_url": (_safe_image_url(key.get("image_url")) or f"https://assets.tarkov.dev/{item_id}-icon.webp") if canonical else "",
+                     "preference_aliases": sorted(alias for alias, ids in aliases.items() if ids == {item_id} and alias != item_id) if canonical else []})
+        if canonical and any(item_id in ids and len(ids) > 1 for ids in aliases.values()):
+            keys[-1]["preference_message"] = "旧偏好标识对应多个物品，已保留旧偏好，未自动迁移。"
+    represented_names = {str(key.get("name", "")).strip().lower() for key in keys}
+    for name in objective_names:
+        if name.lower() not in represented_names:
+            keys.append({"name": name, "item_id": "", "item_kind": "key", "image_url": "", "preference_aliases": [],
+                         "preference_message": "缺少原目录中的明确物品 ID，已保留旧偏好，未按名称推断。"})
+    return keys
 
 
 def _map_annotation_categories(marker: dict[str, Any]) -> list[str]:
@@ -186,32 +282,16 @@ def _mobile_lan_info(server: ThreadingHTTPServer) -> dict[str, Any]:
     except ValueError:
         bound_ip = None
     if bound_ip is not None and bound_ip.version == 4 and bound_ip.is_unspecified:
-        addresses: set[str] = set()
-        try:
-            for result in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET, socket.SOCK_STREAM):
-                address = ipaddress.ip_address(result[4][0])
-                if address.is_private and not address.is_loopback and not address.is_link_local and not address.is_unspecified:
-                    addresses.add(str(address))
-        except OSError:
-            pass
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
-                probe.connect(("192.0.2.1", 80))
-                address = ipaddress.ip_address(probe.getsockname()[0])
-                if address.is_private and not address.is_loopback and not address.is_link_local and not address.is_unspecified:
-                    addresses.add(str(address))
-        except OSError:
-            pass
-        lan_enabled = bool(addresses)
+        ranked = discover_network_candidates()
     elif bound_ip is not None and bound_ip.version == 4 and bound_ip.is_private and not bound_ip.is_loopback and not bound_ip.is_link_local:
-        addresses = {str(bound_ip)}
-        lan_enabled = True
+        ranked = rank_network_candidates([{"address": str(bound_ip), "interface_name": "指定监听地址", "is_up": True}])
     else:
-        addresses = set()
-        lan_enabled = False
+        ranked = rank_network_candidates([])
+    addresses = [candidate["address"] for candidate in ranked["candidates"] if candidate["is_up"] is not False]
     return {
-        "lan_enabled": lan_enabled,
-        "addresses": sorted(addresses, key=lambda value: int(ipaddress.ip_address(value))),
+        **ranked,
+        "lan_enabled": bool(addresses),
+        "addresses": addresses,
         "port": int(server.server_port),
         "pairing_lifetime_seconds": MOBILE_PAIRING_LIFETIME_SECONDS,
     }
@@ -433,9 +513,14 @@ class AssistantState:
         player: Player | None = None,
         recover_empty_capture_candidates: bool = False,
         require_profile_name: bool = False,
+        auto_map_preload: bool = False,
+        preload_limits: dict[str, int] | None = None,
     ) -> None:
         self.store = store or TaskStore()
+        self.preferences = ProfilePreferences(self.store._connect)
         self.player = player
+        self.sources = SourceAdapters(public_cache_root(self.store.path.parent) / "source-cache", **(preload_limits or {}))
+        self.auto_map_preload = auto_map_preload
         self.recover_empty_capture_candidates = recover_empty_capture_candidates
         self.profile_name_required = require_profile_name
         self.analyzer = PageAnalyzer()
@@ -444,6 +529,10 @@ class AssistantState:
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="eft-capture")
         self.catalog_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="eft-catalog")
         self.map_detail_retry_after: dict[tuple[int, str], float] = {}
+        self.map_detail_loading: set[tuple[int, str]] = set()
+        self.map_read_details: dict[tuple[int, str], dict[str, Any]] = {}
+        self.map_data_revision = 0
+        self.drawing_map_scopes: OrderedDict[tuple[str, str, str], tuple[float, frozenset[str]]] = OrderedDict()
         default_profile_id = self.store.default_profile_id()
         profile_ids = {profile.id for profile in self.store.list_profiles()}
         try:
@@ -467,8 +556,10 @@ class AssistantState:
             (profile for profile in self.store.list_profiles() if profile.id == self.selected_profile_id),
             None,
         )
-        if selected_profile and selected_profile.game_mode != "pvp-season":
-            if self.store.latest_catalog_snapshot(selected_profile.game_mode):
+        if selected_profile and not capabilities(self.source_for_profile(selected_profile.id), selected_profile.game_mode)["tasks"]:
+            self.catalog_status = "当前为参考地图来源，不同步任务目录；已有任务和进度保留。"
+        elif selected_profile and selected_profile.game_mode != "pvp-season":
+            if self._source_snapshot(selected_profile.game_mode):
                 self._retry_catalog_pending_captures(selected_profile.game_mode)
             else:
                 self.request_catalog_refresh()
@@ -481,6 +572,26 @@ class AssistantState:
             frontend="local_web",
             restored_capture_count=len(self.capture_records),
         )
+
+    def source_for_profile(self, profile_id: int | None = None) -> str:
+        value = self.store.get_app_setting(f"data_source:{profile_id or self.selected_profile_id}", DEFAULT_SOURCE)
+        return value if value in SOURCE_URLS else DEFAULT_SOURCE
+
+    def _source_snapshot(self, game_mode: str, provider: str | None = None) -> dict[str, Any] | None:
+        return self.store.latest_catalog_snapshot(game_mode, provider or self.source_for_profile())
+
+    def select_data_source(self, provider: str) -> dict[str, Any]:
+        try:
+            validate_source(provider)
+        except CatalogError as error:
+            raise APIError(str(error)) from error
+        with self.lock:
+            if self.catalog_busy:
+                raise APIError("任务目录同步中，请完成后切换来源。", 409)
+            self.store.set_app_setting(f"data_source:{self.selected_profile_id}", provider)
+            self.catalog_status = SOURCE_NOTICES[provider]
+            self.catalog_error = ""
+        return {"source": provider, "notice": SOURCE_NOTICES[provider]}
 
     def _restore_capture_records(self) -> None:
         captures_to_resume: list[tuple[str, int]] = []
@@ -757,54 +868,27 @@ class AssistantState:
                 normalize_text(str(candidate.get("title", ""))),
             ) not in tracked_titles
         ]
-        catalog_snapshot = self.store.latest_catalog_snapshot(selected_profile.game_mode) if selected_profile else None
+        catalog_snapshot = self._source_snapshot(selected_profile.game_mode) if selected_profile else None
         catalog_snapshot_id = int(catalog_snapshot["id"]) if catalog_snapshot else None
         task_payloads = []
         for task in tasks:
             task_data = _task_json(task)
-            cached_task = (
-                self.store.get_catalog_task(catalog_snapshot_id, task.source_task_id)
-                if catalog_snapshot_id and task.source_task_id
-                else None
-            )
-            key_requirements = []
-            if cached_task:
-                source_objectives = cached_task.get("objectives", [])
-                source_items = filter_assault_weapon_items(
-                    source_objectives,
-                    cached_task.get("key_requirements", []),
-                )
-                for item in source_items:
-                    if not isinstance(item, dict):
-                        continue
-                    name = str(item.get("name", "")).strip()
-                    if not is_key_item_name(name):
-                        continue
-                    item_id = str(item.get("item_id", "")).strip().lower()
-                    key_requirements.append(
-                        {
-                            **item,
-                            "name": name or "未命名钥匙",
-                            "item_kind": "key",
-                            "item_id": item_id,
-                            "image_url": (
-                                f"https://assets.tarkov.dev/{item_id}-icon.webp"
-                                if re.fullmatch(r"[0-9a-f]{24}", item_id, re.I)
-                                else ""
-                            ),
-                        }
-                    )
-            if not key_requirements:
-                for line in task.objective.splitlines():
-                    match = re.match(r"\s*(?:需要钥匙|钥匙)\s*[：:]\s*(.+?)\s*$", line, re.IGNORECASE)
-                    if match:
-                        name = match.group(1).strip()
-                        if name and is_key_item_name(name):
-                            key_requirements.append(
-                                {"name": name, "item_id": "", "item_kind": "key"}
-                            )
-            task_data["key_requirements"] = key_requirements
+            task_provider = self.store.task_data_provider(task.id)
+            task_data["data_provider"] = task_provider
+            task_data["key_requirements"] = _task_key_requirements(task, self.store.task_catalog_history(task.id))
             task_payloads.append(task_data)
+        alias_ids: dict[str, set[str]] = {}
+        for payload in task_payloads:
+            for key in payload["key_requirements"]:
+                item_id = key.get("item_id", "")
+                if item_id:
+                    for alias in [item_id, str(key.get("name", "")).strip().lower(), *key["preference_aliases"]]:
+                        alias_ids.setdefault(alias, set()).add(item_id)
+        for payload in task_payloads:
+            for key in payload["key_requirements"]:
+                if any(len(alias_ids[alias]) > 1 for alias in key["preference_aliases"]):
+                    key["preference_message"] = "旧偏好标识对应多个物品，已保留旧偏好，未自动迁移。"
+                key["preference_aliases"] = [alias for alias in key["preference_aliases"] if len(alias_ids[alias]) == 1]
         return {
             "player": self.player.public_data() if self.player else None,
             "profiles": [_profile_json(profile) for profile in profiles],
@@ -813,6 +897,12 @@ class AssistantState:
             "trader_order": list(MERCHANT_CARD_ORDER),
             "tasks": task_payloads,
             "catalog": catalog_snapshot,
+            "data_source": self.source_for_profile(selected_profile_id),
+            "data_sources": [capabilities(source, selected_profile.game_mode) for source in SOURCE_URLS] if selected_profile else [],
+            "source_notice": SOURCE_NOTICES[self.source_for_profile(selected_profile_id)],
+            "cache_warning": self.sources.warnings.get(self.source_for_profile(selected_profile_id), ""),
+            "map_data_revision": self.map_data_revision,
+            "map_drawings_revision": self.store.routes.profile_revision(selected_profile_id),
             "catalog_busy": catalog_busy,
             "catalog_status": catalog_status,
             "catalog_error": catalog_error,
@@ -847,30 +937,33 @@ class AssistantState:
             if profile is None:
                 raise APIError("找不到当前游戏档案", 404)
             game_mode = profile.game_mode
+            source = self.source_for_profile(profile_id)
+            if not capabilities(source, game_mode)["tasks"]:
+                raise APIError("该来源没有已核验的当前模式任务目录；已有任务记录保留。", 422)
             self.catalog_busy = True
-            self.catalog_status = "正在同步 Tarkov.dev JSON 任务资料……"
+            self.catalog_status = f"正在同步 {SOURCE_LABELS[source]} 任务资料……"
             self.catalog_error = ""
         log_event("catalog_sync_requested", game_mode=game_mode, profile_id=profile_id)
-        self.catalog_executor.submit(self._refresh_catalog, game_mode, profile_id)
+        self.catalog_executor.submit(self._refresh_catalog, game_mode, profile_id, source)
         return {"accepted": True, "message": "已开始同步任务资料。"}
 
-    def _refresh_catalog(self, game_mode: str, profile_id: int) -> None:
+    def _refresh_catalog(self, game_mode: str, profile_id: int, source: str = DEFAULT_SOURCE) -> None:
         try:
-            bundle = fetch_tarkov_dev_catalog(game_mode)
+            bundle = self.sources.task_catalog(source, game_mode)
             snapshot_id = self.store.add_catalog_snapshot(
-                source="Tarkov.dev community JSON API",
-                source_url=f"https://json.tarkov.dev/{game_mode}/tasks",
+                source="Tarkov.dev community JSON API" if source == DEFAULT_SOURCE else "eftarkov.com",
+                source_url=f"https://json.tarkov.dev/{game_mode}/tasks" if source == DEFAULT_SOURCE else "https://www.eftarkov.com/task",
                 game_mode=game_mode,
                 source_version=bundle.source_version or "unknown",
                 game_build=None,
                 verification_status="unverified",
                 content_sha256=bundle.content_sha256,
-                metadata=bundle.metadata,
+                metadata={**bundle.metadata, "provider": source},
             )
             self.store.save_catalog_tasks(snapshot_id, bundle.tasks)
             with self.lock:
                 self.catalog_status = (
-                    f"同步完成：Tarkov.dev 返回 {len(bundle.tasks)} 条任务；"
+                    f"同步完成：{SOURCE_LABELS[source]} 返回 {len(bundle.tasks)} 条任务；"
                     f"来源未标注游戏补丁版本。"
                 )
                 self.catalog_error = ""
@@ -917,7 +1010,8 @@ class AssistantState:
         profile = next((item for item in self.profiles() if item.id == profile_id), None)
         if profile is None:
             return []
-        return self.store.search_catalog_tasks(profile.game_mode, query, trader, limit)
+        return [_catalog_images(task) for task in self.store.search_catalog_tasks(
+            profile.game_mode, query, trader, limit, provider=self.source_for_profile(profile_id))]
 
     def screenshot_task_candidates(
         self, analysis: ScreenAnalysis, profile_id: int, capture_id: str
@@ -940,10 +1034,10 @@ class AssistantState:
                     snapshots=imported_snapshots,
                 )
         catalog_tasks = self.store.search_catalog_tasks(
-            profile.game_mode, trader=analysis.trader, limit=200
+            profile.game_mode, trader=analysis.trader, limit=200, provider=self.source_for_profile(profile_id)
         )
         if not catalog_tasks:
-            if not self.store.latest_catalog_snapshot(profile.game_mode):
+            if not self._source_snapshot(profile.game_mode):
                 with self.lock:
                     self.catalog_pending_captures.add((capture_id, profile_id))
             log_event(
@@ -1196,12 +1290,15 @@ class AssistantState:
         force_refresh: bool = False,
     ) -> dict[str, Any]:
         task = self._catalog_task(snapshot_id, source_task_id, profile_id)
+        provider = _catalog_provider(task)
         if task.get("details_loaded") and not force_refresh:
-            return {**task, "map_points": supplement_verified_point_images(
+            if provider != DEFAULT_SOURCE:
+                return _catalog_images(task)
+            return _catalog_images({**task, "map_points": supplement_verified_point_images(
                 source_task_id, task.get("map_points", []), task["game_mode"],
-            )}
+            )})
         try:
-            details = fetch_tarkov_dev_task_detail(source_task_id, task["game_mode"])
+            details = self.sources.task_detail(provider, source_task_id, task["game_mode"])
         except CatalogError as error:
             raise APIError(str(error), 502) from error
         self.store.update_catalog_task_details(
@@ -1211,13 +1308,16 @@ class AssistantState:
             details.get("prerequisites", []),
             details.get("key_requirements", []),
             details.get("map_points", []),
+            map_ids=details.get("map_ids"),
         )
         updated = self.store.get_catalog_task(snapshot_id, source_task_id)
         if updated is None:
             raise APIError("任务资料读取后已不可用。", 404)
-        return {**updated, "map_points": supplement_verified_point_images(
+        if provider != DEFAULT_SOURCE:
+            return _catalog_images(updated)
+        return _catalog_images({**updated, "map_points": supplement_verified_point_images(
             source_task_id, updated.get("map_points", []), updated["game_mode"],
-        )}
+        )})
 
     def import_catalog_task(
         self, snapshot_id: int, source_task_id: str, profile_id: int | None = None
@@ -1284,6 +1384,7 @@ class AssistantState:
             source_version=task["source_version"],
             requirements=objective_requirements,
         )
+        self.store.record_task_data_provider(imported.id, _catalog_provider(task), snapshot_id)
         self.store.delete_pending_task_candidate(profile_id, task["source_task_id"])
         log_event(
             "task_imported_from_catalog",
@@ -1683,14 +1784,101 @@ class AssistantState:
         if profile is None:
             raise APIError("找不到当前游戏档案", 404)
         try:
-            return fetch_tarkov_dev_map_index(profile.game_mode)
+            return self.sources.map_index(self.source_for_profile(profile_id), profile.game_mode)
         except CatalogError as error:
             raise APIError(str(error), 502) from error
 
+    def _original_catalog_task(self, task: Task, game_mode: str) -> dict[str, Any] | None:
+        history = self.store.task_catalog_history(task.id)
+        return next((entry for entry in history if entry.get("details_loaded")), history[0] if history else None)
+
+    @staticmethod
+    def _task_declared_map_ids(task: Task) -> set[str]:
+        aliases = {
+            "55f2d3fd4bdc2d5f408b4567": ("工厂", "Factory"),
+            "56f40101d2720b2a4d8b45d6": ("海关", "Customs"),
+            "5704e3c2d2720bac5b8b4567": ("森林", "Woods"),
+            "5704e4dad2720bb55b8b4567": ("灯塔", "Lighthouse"),
+            "5704e554d2720bac5b8b456e": ("海岸线", "Shoreline"),
+            "5714dbc024597771384a510d": ("立交桥", "Interchange"),
+            "5704e5fad2720bc05b8b4567": ("储备站", "Reserve"),
+            "5714dc692459777137212e12": ("塔科夫街区", "Streets of Tarkov"),
+            "653e6760052c01c1c805532f": ("中心区", "Ground Zero"),
+            "65b8d6f5cdde2479cb2a3125": ("中心区", "Ground Zero"),
+            "5b0fc42d86f7744a585f9105": ("实验室", "The Lab", "Labs"),
+            "69af492a4819ea4ba10a69c5": ("破冰船", "Icebreaker"),
+            "6733700029c367a3d40b02af": ("迷宫", "Labyrinth"),
+            "65cc8f81a9aac3e77d0cfd3e": ("码头地图", "港口地图", "Port"),
+        }
+        lines = [str(requirement.get("text", "")) for requirement in task.requirements]
+        if not lines:
+            lines = [line for line in task.objective.splitlines()
+                     if not re.match(r"\s*(?:钥匙获取|获取方式|需要钥匙|需要物品|钥匙|物品)\s*[：:]", line)]
+        text = "\n".join(lines)
+        result = set()
+        for map_id, names in aliases.items():
+            for name in names:
+                if any("\u4e00" <= character <= "\u9fff" for character in name):
+                    pattern = rf"(?:在|前往|到达|进入|从|逃离|于|至){re.escape(name)}(?!日志|的日志|记录)"
+                else:
+                    pattern = rf"\b(?:on|in|at|to|from)\s+(?:the\s+)?{re.escape(name)}\b(?!\s+(?:log|logs|record|journal)\b)"
+                if re.search(pattern, text, re.I):
+                    result.add(map_id)
+                    break
+        return result
+
+    def _task_map_contexts(self, tasks: list[Task], catalogs: dict[int, dict[str, Any]],
+                           mode: str, provider: str, map_id: str,
+                           placed_task_ids: set[int] | None = None) -> list[dict[str, Any]]:
+        snapshot = self.store.latest_catalog_snapshot(mode, provider)
+        contexts = []
+        for task in tasks:
+            native = catalogs.get(task.id)
+            selected = self.store.get_catalog_task(int(snapshot["id"]), task.source_task_id) if snapshot and task.source_task_id else None
+            original = self._original_catalog_task(task, mode)
+            def known_map_ids(entry):
+                if not entry:
+                    return set()
+                result = {str(point["map_id"]).lower() for point in entry.get("map_points", [])
+                          if isinstance(point, dict) and point.get("map_id")}
+                result.update(str(value).lower() for value in entry.get("map_ids", []) if isinstance(value, str))
+                for objective in entry.get("objectives", []):
+                    if isinstance(objective, dict):
+                        result.update(str(value).lower() for value in objective.get("map_ids", objective.get("maps", [])) if isinstance(value, str))
+                return result
+            original_maps = known_map_ids(original)
+            native_maps = known_map_ids(native or selected)
+            on_map = [p for p in (native or {}).get("map_points", []) if p.get("source_provider") == provider and p.get("map_id") == map_id]
+            known_maps = sorted(native_maps or original_maps or self._task_declared_map_ids(task))
+            requested_maps = REEMR_MAP_IDS.get(map_id, set()) if provider == "reemr" else {map_id}
+            map_relevant = bool(set(known_maps) & requested_maps) if known_maps and requested_maps else None
+            if map_relevant is False:
+                status, message = "other_map", "已确认的任务地图属于其他地图。"
+            elif provider == "reemr":
+                status, message = "reference_only", "本来源仅提供地图资料，未提供已核验任务标点；任务与进度保留。"
+            elif on_map and (placed_task_ids is None or task.id in placed_task_ids):
+                status, message = "matched", ""
+            elif snapshot is None:
+                status, message = "catalog_unavailable", "当前来源目录尚未就绪，任务已保留；未借用其他来源坐标。"
+            elif selected is None:
+                status, message = "unmatched", "当前来源未匹配此任务 ID；原任务和要求已保留。"
+            elif native is None:
+                status, message = "loading", "正在读取当前来源的任务点位；原任务和要求已保留。"
+            else:
+                status, message = "no_points", "当前来源没有此任务在本图的可验证坐标；任务与进度保留。"
+            if map_relevant is None:
+                message = (message + " 任务与本图的关联尚未确认。").strip()
+            contexts.append({"id": task.id, "title": task.title, "trader": task.trader,
+                             "point_status": status, "point_message": message,
+                             "map_relevant": map_relevant,
+                             "known_map_ids": known_maps, "data_provider": self.store.task_data_provider(task.id)})
+        return contexts
+
     def _map_catalog_tasks(
-        self, game_mode: str, tasks: list[Task]
+        self, game_mode: str, tasks: list[Task], provider: str | None = None, profile_id: int | None = None
     ) -> tuple[dict[int, dict[str, Any]], list[str]]:
-        snapshot = self.store.latest_catalog_snapshot(game_mode)
+        provider = provider or self.source_for_profile()
+        snapshot = self._source_snapshot(game_mode, provider)
         if snapshot is None:
             return {}, []
         snapshot_id = int(snapshot["id"])
@@ -1704,57 +1892,58 @@ class AssistantState:
                 continue
             cached_points = cached.get("map_points", [])
             has_legacy_map_points = any(
-                isinstance(point, dict) and point.get("source_provider") != "tarkov.dev"
+                isinstance(point, dict) and point.get("source_provider") != provider
                 for point in cached_points
             )
             needs_map_refresh = not cached["details_loaded"] or has_legacy_map_points
-            if needs_map_refresh:
-                failure_key = (snapshot_id, task.source_task_id)
+            failure_key = (snapshot_id, task.source_task_id)
+            with self.lock:
+                enriched = self.map_read_details.get(failure_key)
+            needs_photos = (provider == DEFAULT_SOURCE and enriched is None
+                            and any(record["task_id"] == task.source_task_id for record in VERIFIED_POINT_PHOTOS))
+            if needs_map_refresh or needs_photos:
                 with self.lock:
                     retry_after = self.map_detail_retry_after.get(failure_key, 0)
-                if retry_after > time.monotonic():
-                    warnings.append(task.title)
-                else:
-                    try:
-                        cached = self.load_catalog_task_details(
-                            snapshot_id,
-                            task.source_task_id,
-                            force_refresh=has_legacy_map_points,
-                        )
-                        with self.lock:
-                            self.map_detail_retry_after.pop(failure_key, None)
-                    except Exception as error:
-                        with self.lock:
-                            self.map_detail_retry_after[failure_key] = time.monotonic() + 60
-                        warnings.append(task.title)
-                        log_event(
-                            "map_task_details_failed",
-                            level=logging.WARNING,
-                            task_id=task.id,
-                            source_task_id=task.source_task_id,
-                            title=task.title,
-                            error=str(error),
-                        )
-                        continue
-            # Supplement existing cached details at read time; no resync, task
-            # progress writes or replacement of the Tarkov.dev coordinates.
-            catalog_tasks[task.id] = {**cached, "map_points": supplement_verified_point_images(
-                task.source_task_id, cached.get("map_points", []), game_mode,
-            )}
+                    if not self._closed and failure_key not in self.map_detail_loading and retry_after <= time.monotonic():
+                        self.map_detail_loading.add(failure_key)
+                        self.catalog_executor.submit(self._load_map_task_details,
+                            snapshot_id, task.source_task_id, profile_id or self.selected_profile_id,
+                            has_legacy_map_points)
+                warnings.append(task.title)
+                if needs_map_refresh:
+                    continue
+            catalog_tasks[task.id] = enriched or cached
         return catalog_tasks, warnings
 
-    def map_overview(self) -> dict[str, Any]:
+    def _load_map_task_details(self, snapshot_id: int, task_id: str, profile_id: int, force: bool) -> None:
+        key = (snapshot_id, task_id)
+        try:
+            details = self.load_catalog_task_details(snapshot_id, task_id, profile_id=profile_id, force_refresh=force)
+            with self.lock:
+                self.map_read_details[key] = details
+                self.map_detail_retry_after.pop(key, None)
+                self.map_data_revision += 1
+        except Exception as error:
+            with self.lock:
+                self.map_detail_retry_after[key] = time.monotonic() + 60
+            log_event("map_task_details_failed", level=logging.WARNING, source_task_id=task_id, error=str(error))
+        finally:
+            with self.lock:
+                self.map_detail_loading.discard(key)
+
+    def map_overview(self, provider: str | None = None) -> dict[str, Any]:
         with self.lock:
             profile_id = self.selected_profile_id
         profile = next((item for item in self.profiles() if item.id == profile_id), None)
         if profile is None:
             raise APIError("找不到当前游戏档案", 404)
         try:
-            maps = fetch_tarkov_dev_map_index(profile.game_mode)
+            provider = validate_source(provider or self.source_for_profile(profile_id))
+            maps = self.sources.map_index(provider, profile.game_mode)
         except CatalogError as error:
             raise APIError(str(error), 502) from error
         tasks = [task for task in self.store.list_tasks(profile_id) if task.state != "complete"]
-        catalog_tasks, warnings = self._map_catalog_tasks(profile.game_mode, tasks)
+        catalog_tasks, warnings = self._map_catalog_tasks(profile.game_mode, tasks, provider, profile_id)
         map_counts = {
             entry["map_id"]: {"task_ids": set(), "point_count": 0}
             for entry in maps
@@ -1793,7 +1982,7 @@ class AssistantState:
             cached = catalog_tasks.get(task.id)
             points = [
                 point for point in cached.get("map_points", [])
-                if isinstance(point, dict) and point.get("source_provider") == "tarkov.dev"
+                if isinstance(point, dict) and point.get("source_provider") == provider
             ] if cached else []
             for point in points:
                 map_id = str(point.get("map_id", "")).lower()
@@ -1853,6 +2042,9 @@ class AssistantState:
             default=maps[0] if maps else None,
         )
         return {
+            "source_provider": provider,
+            "source_notice": SOURCE_NOTICES[provider],
+            "cache_warning": self.sources.warnings.get(provider, ""),
             "maps": maps,
             "preferred_map_id": preferred_map_id["map_id"] if preferred_map_id else "",
             "detail_warnings": warnings,
@@ -1864,27 +2056,64 @@ class AssistantState:
         except RuntimeError as error:
             raise APIError(str(error), 502) from error
 
-    def map_view(self, map_id: str, floor_key: str = "") -> dict[str, Any]:
+    def map_view(self, map_id: str, floor_key: str = "", provider: str | None = None) -> dict[str, Any]:
         with self.lock:
             profile_id = self.selected_profile_id
         profile = next((item for item in self.profiles() if item.id == profile_id), None)
         if profile is None:
             raise APIError("找不到当前游戏档案", 404)
         try:
-            config = fetch_tarkov_dev_map_data(map_id, profile.game_mode)
+            provider = validate_source(provider or self.source_for_profile(profile_id))
+            config = self.sources.map_data(provider, map_id, profile.game_mode)
         except CatalogError as error:
             raise APIError(str(error), 502) from error
+        if getattr(self, "auto_map_preload", False):
+            self.sources.prioritize(provider, profile.game_mode, map_id, floor_key or None)
         tasks = [task for task in self.store.list_tasks(profile_id) if task.state != "complete"]
-        catalog_tasks, detail_warnings = self._map_catalog_tasks(profile.game_mode, tasks)
+        if config.get("reference_material") and not config.get("reference_only"):
+            floors = config.get("floors", [])
+            available_floors = [entry for entry in floors if entry.get("available") is not False]
+            floor = next((entry for entry in available_floors if entry["key"] == str(floor_key)), None)
+            if floor is None:
+                floor = next((entry for entry in available_floors if entry.get("is_default")), None)
+            if floor is None and available_floors:
+                floor = available_floors[0]
+            if floor is None:
+                notice = "；".join(config.get("warnings", [])) or "该参考地图暂无允许读取的原图。"
+                return {**config, "reference_only": True, "availability_notice": notice,
+                        "source_provider": provider, "source_label": SOURCE_LABELS[provider],
+                        "map_name": config["name"], "map_name_en": config["name_en"],
+                        "source_notice": SOURCE_NOTICES[provider], "cache_warning": notice,
+                        "floor": {}, "image_url": "", "markers": [], "annotations": [],
+                        "tasks": [{"id": task.id, "title": task.title, "trader": task.trader} for task in tasks],
+                        "task_contexts": self._task_map_contexts(tasks, {}, profile.game_mode, provider, map_id),
+                        "detail_warnings": config.get("warnings", [])}
+            return {**config, "source_provider": provider, "source_label": SOURCE_LABELS[provider],
+                    "map_name": config["name"], "map_name_en": config["name_en"],
+                    "source_notice": SOURCE_NOTICES[provider], "cache_warning": self.sources.warnings.get(provider, ""),
+                    "markers": [], "annotations": [],
+                    "tasks": [{"id": task.id, "title": task.title, "trader": task.trader} for task in tasks],
+                    "floor": floor, "floors": floors,
+                    "task_contexts": self._task_map_contexts(tasks, {}, profile.game_mode, provider, map_id),
+                    "image_url": f"/api/map/image?{urlencode({'map_id': map_id, 'floor': floor['key'], 'source': provider})}",
+                    "detail_warnings": config.get("warnings", [])}
+        if config.get("reference_only"):
+            return {**config, "map_name": config["name"], "map_name_en": config["name_en"],
+                    "source_provider": provider, "source_label": SOURCE_LABELS[provider],
+                    "source_notice": SOURCE_NOTICES[provider], "markers": [],
+                    "tasks": [{"id": t.id, "title": t.title, "trader": t.trader} for t in tasks],
+                    "task_contexts": self._task_map_contexts(tasks, {}, profile.game_mode, provider, map_id),
+                    "floor": {}, "image_url": "", "detail_warnings": []}
+        catalog_tasks, detail_warnings = self._map_catalog_tasks(profile.game_mode, tasks, provider, profile_id)
         floor_keys = {item["key"] for item in config["floors"]}
-        visited_marker_ids = self.store.list_map_marker_visits(profile_id, map_id)
+        visited_marker_ids = self.store.list_map_marker_visits(profile_id, f"{provider}:{map_id}")
         task_points: list[tuple[Task, dict[str, Any]]] = []
         for task in tasks:
             cached = catalog_tasks.get(task.id)
             if cached is None:
                 continue
             for point in cached.get("map_points", []):
-                if not isinstance(point, dict) or point.get("source_provider") != "tarkov.dev":
+                if not isinstance(point, dict) or point.get("source_provider") != provider:
                     continue
                 if str(point.get("map_id", "")).lower() == map_id:
                     task_points.append((task, point))
@@ -1901,6 +2130,8 @@ class AssistantState:
         floor = next((item for item in config["floors"] if item["key"] == str(floor_key)), None)
         if floor is None:
             floor = next((item for item in config["floors"] if item.get("is_default")), None)
+        if floor is None and any(item["active_point_count"] for item in floors):
+            floor = max(floors, key=lambda item: item["active_point_count"])
         if floor is None and config["floors"]:
             floor = config["floors"][0]
         if floor is None:
@@ -1926,6 +2157,8 @@ class AssistantState:
             markers.append(
                 {
                     "id": api_marker_id,
+                    "source_provider": provider,
+                    "image_notice": point.get("image_notice", ""),
                     "x_percent": x_percent,
                     "y_percent": y_percent,
                     "title": point.get("title") or task.title,
@@ -1938,7 +2171,7 @@ class AssistantState:
                     "task_title": task.title,
                     "point_kind": "objective",
                     "source_url": point.get("source_url", config["source_url"]),
-                    "source_image_urls": point.get("source_image_urls", []),
+                    "source_image_urls": _point_image_urls(point.get("source_image_urls", [])),
                     "source_image_page_url": point.get("source_image_page_url", ""),
                     "source_image_provider": point.get("source_image_provider", ""),
                     "source_image_marker_id": point.get("source_image_marker_id", ""),
@@ -1949,6 +2182,10 @@ class AssistantState:
             )
 
         return {
+            "source_provider": provider,
+            "source_label": SOURCE_LABELS[provider],
+            "source_notice": SOURCE_NOTICES[provider],
+            "cache_warning": self.sources.warnings.get(provider, ""),
             "map_id": config["map_id"],
             "map_name": config["name"],
             "map_name_en": config["name_en"],
@@ -1958,11 +2195,13 @@ class AssistantState:
             "map_license_url": config["map_license_url"],
             "floor": floor,
             "floors": floors,
-            "image_url": f"/api/map/image?{urlencode({'map_id': config['map_id'], 'floor': floor['key']})}",
+            "image_url": f"/api/map/image?{urlencode({'map_id': config['map_id'], 'floor': floor['key'], 'source': provider})}",
             "markers": markers,
             "annotations": config["annotations"],
             "unplaced_annotation_count": config.get("unplaced_annotation_count", 0),
             "detail_warnings": detail_warnings,
+            "task_contexts": self._task_map_contexts(tasks, catalog_tasks, profile.game_mode, provider, map_id,
+                                                       {marker["task_id"] for marker in markers}),
             "tasks": [
                 {"id": task.id, "title": task.title, "trader": task.trader}
                 for task in tasks
@@ -1970,14 +2209,14 @@ class AssistantState:
             "source_url": config["source_url"],
         }
 
-    def map_floor_image(self, map_id: str, floor_key: str) -> bytes:
+    def map_floor_image(self, map_id: str, floor_key: str, provider: str | None = None) -> bytes:
         with self.lock:
             profile_id = self.selected_profile_id
         profile = next((item for item in self.profiles() if item.id == profile_id), None)
         if profile is None:
             raise APIError("找不到当前游戏档案", 404)
         try:
-            return fetch_tarkov_dev_map_floor_image(map_id, floor_key, profile.game_mode)
+            return self.sources.floor_image(validate_source(provider or self.source_for_profile(profile_id)), map_id, floor_key, profile.game_mode)
         except CatalogError as error:
             log_event(
                 "map_floor_image_failed",
@@ -1988,6 +2227,65 @@ class AssistantState:
                 error=str(error),
             )
             raise APIError(f"无法读取地图底图：{error}", 502) from error
+
+    def _drawing_profile(self, expected_profile_id: int | None) -> Profile:
+        profile_id = self.selected_profile_id
+        if expected_profile_id is not None and profile_number(expected_profile_id) != profile_id:
+            raise DrawingError("当前档案已切换，请保留待同步路线。", 409,
+                               error_code="profile_changed", profile_id=profile_id)
+        profile = next((entry for entry in self.profiles() if entry.id == profile_id), None)
+        if profile is None:
+            raise DrawingError("找不到路线档案。", 404)
+        return profile
+
+    def _validate_drawing_map(self, scope: dict[str, str], game_mode: str) -> None:
+        key = (scope["source"], game_mode, scope["map_id"])
+        with self.lock:
+            cached = self.drawing_map_scopes.get(key)
+        if cached is None or time.monotonic() - cached[0] >= 300:
+            try:
+                config = self.sources.map_data(scope["source"], scope["map_id"], game_mode)
+            except CatalogError as error:
+                raise DrawingError(str(error)) from error
+            if config.get("map_id") != scope["map_id"]:
+                raise DrawingError("路线地图与所选来源不匹配。")
+            cached = (time.monotonic(), frozenset(floor["key"] for floor in config.get("floors", [])))
+            with self.lock:
+                self.drawing_map_scopes[key] = cached
+                self.drawing_map_scopes.move_to_end(key)
+                while len(self.drawing_map_scopes) > 256:
+                    self.drawing_map_scopes.popitem(last=False)
+        if scope["floor_key"] and scope["floor_key"] not in cached[1]:
+            raise DrawingError("路线楼层不属于所选来源地图。")
+
+    def map_drawings(self, source: str, map_id: str, floor_key: str, since: int | None = None,
+                     profile_id: int | None = None, operation_id: str | None = None) -> dict[str, Any]:
+        scope = drawing_scope(source, map_id, floor_key)
+        if since is not None:
+            revision_number(since, "since")
+        if operation_id is not None:
+            operation_id = operation_uuid(operation_id)
+        with self.lock:
+            profile = self._drawing_profile(profile_id)
+        self._validate_drawing_map(scope, profile.game_mode)
+        with self.lock:
+            self._drawing_profile(profile.id)
+            return self.store.routes.read(profile.id, source, map_id, floor_key, since, operation_id)
+
+    def set_map_drawings(self, payload: dict[str, Any]) -> dict[str, Any]:
+        command = normalize_operation(payload)
+        scope = {key: command[key] for key in ("source", "map_id", "floor_key")}
+        with self.lock:
+            profile = self._drawing_profile(command["profile_id"])
+            if command["source"] != self.source_for_profile(profile.id):
+                raise DrawingError("当前来源已切换，请保留待同步路线。", 409,
+                                   error_code="source_changed", profile_id=profile.id)
+        self._validate_drawing_map(scope, profile.game_mode)
+        with self.lock:
+            self._drawing_profile(profile.id)
+            if command["source"] != self.source_for_profile(profile.id):
+                raise DrawingError("当前来源已切换，请保留待同步路线。", 409, error_code="source_changed", profile_id=profile.id)
+            return self.store.routes.apply(command)
 
     def set_map_marker_visited(self, payload: dict[str, Any]) -> dict[str, Any]:
         map_id = str(payload.get("map_id", "")).strip().lower()
@@ -2014,7 +2312,12 @@ class AssistantState:
             raise APIError("到访状态必须是布尔值。")
         with self.lock:
             profile_id = self.selected_profile_id
-        self.store.set_map_marker_visited(profile_id, map_id, marker_id, visited)
+        provider = str(payload.get("source", "")) or self.source_for_profile(profile_id)
+        if provider != self.source_for_profile(profile_id):
+            raise APIError("来源已切换；请刷新地图后再标记。", 409)
+        if (provider == DEFAULT_SOURCE and not is_tarkov_dev_marker) or (provider == "eftarkov" and not is_eft_marker) or provider == "reemr":
+            raise APIError("点位不属于当前数据源。", 409)
+        self.store.set_map_marker_visited(profile_id, f"{provider}:{map_id}", marker_id, visited)
         log_event(
             "map_marker_visit_changed",
             profile_id=profile_id,
@@ -2029,12 +2332,19 @@ class AssistantState:
             self._closed = True
         self.executor.shutdown(wait=False, cancel_futures=True)
         self.catalog_executor.shutdown(wait=False, cancel_futures=True)
+        if hasattr(self.sources, "close"):
+            self.sources.close()
         log_event("application_stopped")
 
 
 class PlayerStateManager:
-    def __init__(self, data_root: Path | None = None) -> None:
+    def __init__(self, data_root: Path | None = None, *, runtime_root: Path | None = None,
+                 runtime_lock: DataDirectoryLock | None = None, preload_limits: dict[str, int] | None = None) -> None:
         self.auth = PlayerAuthStore(data_root)
+        self.runtime_root = runtime_root
+        self.runtime_lock = runtime_lock
+        self.preload_limits = preload_limits
+        self.runtime_operations = threading.Lock()
         self.local_player = self.auth.local_player()
         self._states: dict[str, AssistantState] = {}
         self._lock = threading.RLock()
@@ -2061,7 +2371,7 @@ class PlayerStateManager:
                     )
                 else:
                     require_profile_name = profile_name_setup != "1"
-                shared_catalog_path = default_database_path()
+                shared_catalog_path = self.auth.root / "tasks.sqlite3"
                 recover_empty_capture_candidates = False
                 if store.path.resolve() != shared_catalog_path.resolve():
                     had_catalog = any(
@@ -2085,6 +2395,8 @@ class PlayerStateManager:
                     player=player,
                     recover_empty_capture_candidates=recover_empty_capture_candidates,
                     require_profile_name=require_profile_name,
+                    auto_map_preload=self.runtime_root is not None,
+                    preload_limits=self.preload_limits,
                 )
                 self._states[player.id] = assistant
             return assistant
@@ -2108,10 +2420,12 @@ def _make_handler(
         "/api/maps",
         "/api/map",
         "/api/map/image",
+        "/api/map/drawings",
     }
     mobile_static_paths = {
         "/mobile",
         "/assets/mobile.js",
+        "/assets/route_tools.js",
         "/assets/mobile.css",
         "/favicon.ico",
     }
@@ -2121,6 +2435,8 @@ def _make_handler(
 
         def log_message(self, format_string: str, *args: Any) -> None:
             path = urlparse(self.path).path
+            if path == "/api/map/drawings" and self.command == "GET":
+                return
             if path in {
                 "/api/state",
                 "/api/screenshot",
@@ -2197,6 +2513,20 @@ def _make_handler(
         def _mobile_api_allowed(self) -> bool:
             return self.command == "GET" and urlparse(self.path).path in mobile_get_paths
 
+        def _is_mobile_request(self) -> bool:
+            return mobile_only or state.auth.session_scope(self._session_token()) == "mobile" or not self._is_loopback_client()
+
+        def _request_source(self, assistant: AssistantState, query: dict[str, list[str]]) -> str:
+            values = query.get("source", [None])
+            if len(values) != 1:
+                raise APIError("地图来源参数无效。", 400)
+            with assistant.lock:
+                provider = values[0] or assistant.source_for_profile(assistant.selected_profile_id)
+            try:
+                return validate_source(provider)
+            except CatalogError as error:
+                raise APIError(str(error), 400) from error
+
         def _session_cookie(self, token: str, max_age: int) -> tuple[str, str]:
             cookie = SimpleCookie()
             cookie_name = "eft_player_session"
@@ -2219,7 +2549,7 @@ def _make_handler(
                 length = int(length_text)
             except ValueError as error:
                 raise APIError("请求长度无效。") from error
-            if length <= 0 or length > 1_000_000:
+            if length <= 0 or length > 3_000_000:
                 raise APIError("请求内容为空或超过限制。")
             try:
                 payload = json.loads(self.rfile.read(length).decode("utf-8"))
@@ -2245,6 +2575,15 @@ def _make_handler(
             return image_bytes
 
         def _dispatch_error(self, error: Exception) -> None:
+            if isinstance(error, PreferenceError):
+                self._send_json(error.status, {"error": str(error), **error.details})
+                return
+            if isinstance(error, SaveDataError):
+                self._send_json(409, {"error": str(error), "status": getattr(error, "status", "save_data_error")})
+                return
+            if isinstance(error, DrawingError):
+                self._send_json(error.status, {"error": str(error), **error.details})
+                return
             if isinstance(error, APIError):
                 status = error.status
                 message = str(error)
@@ -2284,6 +2623,12 @@ def _make_handler(
                     self._send_static("styles.css")
                 elif path == "/assets/mobile.js":
                     self._send_static("mobile.js")
+                elif path == "/assets/route_tools.js":
+                    self._send_static("route_tools.js")
+                elif path == "/assets/preference_sync.js":
+                    self._send_static("preference_sync.js")
+                elif path == "/assets/save_tools.js":
+                    self._send_static("save_tools.js")
                 elif path == "/assets/mobile.css":
                     self._send_static("mobile.css")
                 elif path == "/favicon.ico":
@@ -2294,7 +2639,9 @@ def _make_handler(
                     player = self._require_player()
                     assistant = state.state_for(player)
                     if path == "/api/mobile/info":
-                        self._send_json(200, mobile_network)
+                        saved = assistant.store.get_app_setting(f"mobile_pairing_address:{assistant.selected_profile_id}", "")
+                        ranked = rank_network_candidates(mobile_network.get("candidates", []), saved)
+                        self._send_json(200, {**mobile_network, **ranked})
                     elif path == "/api/mobile/state":
                         snapshot = assistant.snapshot()
                         selected_profile = next(
@@ -2311,6 +2658,10 @@ def _make_handler(
                                 "profiles": [selected_profile] if selected_profile else [],
                                 "selected_profile_id": snapshot["selected_profile_id"],
                                 "tasks": snapshot["tasks"],
+                                "data_source": snapshot["data_source"],
+                                "source_notice": snapshot["source_notice"],
+                                "map_data_revision": snapshot["map_data_revision"],
+                                "map_drawings_revision": snapshot["map_drawings_revision"],
                             },
                         )
                     elif path == "/api/state":
@@ -2346,14 +2697,62 @@ def _make_handler(
                         except ValueError as error:
                             raise APIError("目录结果数量无效。") from error
                         self._send_json(200, {"tasks": assistant.catalog_tasks(search_text, trader, limit)})
+                    elif path == "/api/save-data":
+                        if state.runtime_root is None:
+                            self._send_json(200, {"status": "unmanaged", "root": str(state.auth.root), "datasets": []})
+                        else:
+                            with state.runtime_operations:
+                                self._send_json(200, export_runtime_status(state.runtime_root))
+                    elif path in {"/api/preferences", "/api/preferences/conflicts"}:
+                        query = parse_qs(urlparse(self.path).query, keep_blank_values=True)
+                        if set(query) != {"profile_id"} or len(query["profile_id"]) != 1:
+                            raise PreferenceError("必须指定当前档案。")
+                        try:
+                            profile_id = int(query["profile_id"][0])
+                        except ValueError as error:
+                            raise PreferenceError("档案编号无效。") from error
+                        with assistant.lock:
+                            if profile_id != assistant.selected_profile_id:
+                                raise PreferenceError("当前档案已切换；原偏好保留。", 409, error_code="profile_changed")
+                            result = (assistant.preferences.export_conflicts(profile_id)
+                                      if path.endswith("/conflicts") else assistant.preferences.get(profile_id))
+                        self._send_json(200, result)
+                    elif path == "/api/map/cache":
+                        self._send_json(200, assistant.sources.cache_status())
                     elif path == "/api/maps":
-                        self._send_json(200, assistant.map_overview())
+                        query = parse_qs(urlparse(self.path).query)
+                        provider = self._request_source(assistant, query)
+                        self._send_json(200, assistant.map_overview(provider))
+                    elif path == "/api/map/drawings":
+                        query = parse_qs(urlparse(self.path).query, keep_blank_values=True, max_num_fields=8)
+                        if set(query) - {"source", "map_id", "floor", "since", "profile_id", "operation_id"} or any(len(values) != 1 for values in query.values()):
+                            raise DrawingError("路线查询参数无效。")
+                        numbers = {}
+                        for key in ("since", "profile_id"):
+                            if key in query:
+                                value = query[key][0]
+                                if not re.fullmatch(r"[0-9]{1,19}", value):
+                                    raise DrawingError(f"{key} 无效。")
+                                numbers[key] = int(value)
+                        self._send_json(200, assistant.map_drawings(
+                            query.get("source", [None])[0], query.get("map_id", [None])[0],
+                            query.get("floor", [None])[0], operation_id=query.get("operation_id", [None])[0], **numbers))
                     elif path == "/api/map/image":
                         query = parse_qs(urlparse(self.path).query)
                         map_id = query.get("map_id", [""])[0]
                         floor_key = query.get("floor", [""])[0]
-                        image = assistant.map_floor_image(map_id, floor_key)
-                        self._send(200, image, "image/svg+xml; charset=utf-8")
+                        provider = self._request_source(assistant, query)
+                        if self._is_mobile_request() and provider == "reemr":
+                            raise APIError("RE3MR 高清原图仅供桌面本机个人查看；未启用局域网再托管。", 403)
+                        image = assistant.map_floor_image(map_id, floor_key, provider)
+                        content_type = "image/svg+xml; charset=utf-8"
+                        if image.startswith(b"\x89PNG\r\n\x1a\n"):
+                            content_type = "image/png"
+                        elif image.startswith(b"\xff\xd8\xff"):
+                            content_type = "image/jpeg"
+                        elif image[:4] == b"RIFF" and image[8:12] == b"WEBP":
+                            content_type = "image/webp"
+                        self._send(200, image, content_type)
                     elif path == "/api/hideout":
                         query = parse_qs(urlparse(self.path).query)
                         force_refresh = query.get("refresh", [""])[0] == "1"
@@ -2362,7 +2761,12 @@ def _make_handler(
                         query = parse_qs(urlparse(self.path).query)
                         map_id = query.get("map_id", [""])[0]
                         floor_key = query.get("floor", [""])[0]
-                        self._send_json(200, assistant.map_view(map_id, floor_key))
+                        provider = self._request_source(assistant, query)
+                        view = assistant.map_view(map_id, floor_key, provider)
+                        if self._is_mobile_request() and view.get("reference_material"):
+                            view = {**view, "reference_only": True, "image_url": "",
+                                    "source_notice": "RE3MR 高清原图仅在桌面本机个人查看；未启用局域网再托管。"}
+                        self._send_json(200, view)
                     else:
                         self._send_json(404, {"error": "路径不存在。"})
             except Exception as error:
@@ -2412,7 +2816,63 @@ def _make_handler(
                     return
                 player = self._require_player()
                 assistant = state.state_for(player)
-                if path == "/api/profiles/name":
+                if path in {"/api/save-data/import", "/api/save-data/select", "/api/save-data/rollback"}:
+                    if state.runtime_root is None or state.runtime_lock is None:
+                        raise APIError("当前启动方式不支持托管存档。", 409)
+                    if payload.get("confirmed") is not True:
+                        raise APIError("需要明确确认；原始存档不会覆盖。", 409)
+                    with state.runtime_operations:
+                        if path.endswith("/import"):
+                            if set(payload) - {"confirmed", "source_root"} or not isinstance(payload.get("source_root"), str):
+                                raise APIError("迁移来源目录无效。")
+                            result = prepare_runtime(state.runtime_root, migrate=True, source_root=payload["source_root"],
+                                                     lock=state.runtime_lock, activate=False).public_data()
+                        elif path.endswith("/select"):
+                            if set(payload) - {"confirmed", "dataset_id"}:
+                                raise APIError("存档选择参数无效。")
+                            result = select_dataset(state.runtime_root, payload.get("dataset_id"), lock=state.runtime_lock)
+                        else:
+                            if set(payload) != {"confirmed"}:
+                                raise APIError("回滚参数无效。")
+                            result = rollback_dataset(state.runtime_root, lock=state.runtime_lock)
+                    self._send_json(200, result)
+                elif path in {"/api/preferences", "/api/preferences/resolve"}:
+                    allowed = {"profile_id", "base_revision", "operation_id"}
+                    allowed |= {"conflict_id", "choice"} if path.endswith("/resolve") else {"data", "only_if_empty"}
+                    if set(payload) - allowed or type(payload.get("profile_id")) is not int:
+                        raise PreferenceError("偏好请求字段无效。")
+                    profile_id = payload["profile_id"]
+                    with assistant.lock:
+                        if profile_id != assistant.selected_profile_id:
+                            raise PreferenceError("当前档案已切换；原偏好保留。", 409, error_code="profile_changed")
+                        if path.endswith("/resolve"):
+                            result = assistant.preferences.resolve(profile_id, payload.get("conflict_id"),
+                                payload.get("choice"), payload.get("base_revision"), payload.get("operation_id"))
+                        else:
+                            result = assistant.preferences.save(profile_id, payload.get("data"),
+                                payload.get("base_revision"), payload.get("operation_id"), payload.get("only_if_empty", False))
+                    self._send_json(200, result)
+                elif path == "/api/map/cache":
+                    if (set(payload) - {"action", "all_sources", "map_id", "scope", "force"}
+                            or type(payload.get("all_sources", False)) is not bool
+                            or type(payload.get("force", False)) is not bool
+                            or payload.get("scope", "all") not in {"all", "current"}
+                            or not isinstance(payload.get("map_id", ""), str)
+                            or len(payload.get("map_id", "")) > 160):
+                        raise APIError("缓存请求字段无效。")
+                    if payload.get("action") == "cancel":
+                        assistant.sources.cancel_preload()
+                        self._send_json(200, assistant.sources.cache_status())
+                    elif payload.get("action") in {"start", "resume"}:
+                        profile = assistant._drawing_profile(assistant.selected_profile_id)
+                        result = assistant.sources.preload(assistant.source_for_profile(profile.id), profile.game_mode,
+                            payload.get("map_id") or None,
+                            scope=payload.get("scope", "all" if payload.get("all_sources", True) else "current"),
+                            force=payload.get("force", False), resume=payload.get("action") == "resume")
+                        self._send_json(200, result)
+                    else:
+                        raise APIError("未知缓存操作。")
+                elif path == "/api/profiles/name":
                     profile = assistant.name_initial_profile(str(payload.get("name", "")))
                     self._send_json(200, {"profile": _profile_json(profile)})
                 elif path == "/api/mobile/pairing":
@@ -2428,6 +2888,8 @@ def _make_handler(
                         raise APIError("请选择有效的局域网 IPv4 地址。") from error
                     if address not in network["addresses"]:
                         raise APIError("所选地址不属于当前服务的局域网地址。", 403)
+                    if payload.get("remember_selection") is True:
+                        assistant.store.set_app_setting(f"mobile_pairing_address:{assistant.selected_profile_id}", address)
                     token, expires_at = state.auth.create_mobile_pairing_token(player.id)
                     mobile_url = f"http://{address}:{network['port']}/mobile#pair={token}"
                     qr_code = qrcode.QRCode(
@@ -2475,6 +2937,8 @@ def _make_handler(
                 elif path == "/api/tasks/clear":
                     deleted_count = assistant.clear_tasks()
                     self._send_json(200, {"cleared_count": deleted_count})
+                elif path == "/api/data-source":
+                    self._send_json(200, assistant.select_data_source(str(payload.get("source", ""))))
                 elif path == "/api/catalog/refresh":
                     self._send_json(202, assistant.request_catalog_refresh())
                 elif path == "/api/catalog/details":
@@ -2498,6 +2962,8 @@ def _make_handler(
                     source_task_id = str(payload.get("source_task_id", ""))
                     task = assistant.import_catalog_task(snapshot_id, source_task_id)
                     self._send_json(201, {"task": _task_json(task)})
+                elif path == "/api/map/drawings":
+                    self._send_json(200, assistant.set_map_drawings(payload))
                 elif path == "/api/map/markers/visit":
                     self._send_json(200, assistant.set_map_marker_visited(payload))
                 elif path.startswith("/api/tasks/"):
@@ -2626,10 +3092,20 @@ def _tcp_port(value: str) -> int:
 
 def _startup_options(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="EFT Task Assistant local web app")
+    add_data_dir_argument(parser)
+    parser.add_argument("--migrate-legacy", action="store_true", help="明确确认备份并复制旧存档，原数据库保留")
+    parser.add_argument("--import-data-dir", type=resolve_data_dir, help="明确选择要复制的外部存档根目录")
+    parser.add_argument("--select-dataset", help="选择既有独立存档集；不合并")
+    parser.add_argument("--list-saves", action="store_true", help="只读输出存档目录与计数后退出")
+    parser.add_argument("--preload-budget-mib", type=int, default=512, help="单轮后台地图读取预算 MiB（1-512）；前台不受此项限制")
+    parser.add_argument("--preload-max-assets", type=int, default=512, help="单轮新增后台图片上限（1-512）；暂停后可继续")
+    parser.add_argument("--no-preload", action="store_true", help="本次启动暂停自动后台预热；可在页面手动启动")
     parser.add_argument("--port", type=_tcp_port, help="指定桌面回环服务端口（0 为自动分配）")
     parser.add_argument("--mobile-port", type=_tcp_port, help="指定手机只读服务端口（0 为自动分配）")
     parser.add_argument("--no-browser", action="store_true", help="不自动打开浏览器")
     options = parser.parse_args(argv)
+    if not 1 <= options.preload_budget_mib <= 512 or not 1 <= options.preload_max_assets <= 512:
+        parser.error("后台地图预算和图片上限必须位于 1-512。")
     if options.port not in (None, 0) and options.port == options.mobile_port:
         parser.error("桌面与手机服务不能使用同一个固定端口。")
     return options
@@ -2638,8 +3114,62 @@ def _startup_options(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     options = _startup_options(argv)
     _configure_console_encoding()
+    try:
+        root = resolve_data_dir(options.data_dir)
+        if options.list_saves:
+            discovery = (discover_legacy_saves(root, legacy_candidates(root))
+                         if options.data_dir is None and options.import_data_dir is None else None)
+            print(json.dumps(discovery.public_data() if discovery else export_runtime_status(root), ensure_ascii=False, indent=2), flush=True)
+            return 0
+    except (SaveDataError, DefaultPathError, OSError) as error:
+        print(f"存档路径检查已安全停止：{error}", file=sys.stderr, flush=True)
+        return 2
+    try:
+        with DataDirectoryLock(root) as runtime_lock:
+            if options.select_dataset:
+                select_dataset(root, options.select_dataset, lock=runtime_lock)
+            runtime = (discover_legacy_saves(root, legacy_candidates(root))
+                       if options.data_dir is None and options.import_data_dir is None else None)
+            if runtime is None:
+                runtime = prepare_runtime(root, migrate=options.migrate_legacy,
+                                          source_root=options.import_data_dir, lock=runtime_lock)
+            if runtime.status != "ready":
+                from save_setup import run_save_setup
+
+                runtime, port = run_save_setup(root, runtime_lock, runtime, bind=_bind_server,
+                    port=options.port, no_browser=options.no_browser, source_root=options.import_data_dir)
+                options.port = port
+                if runtime is None:
+                    return 0
+                options.no_browser = True
+            configure_paths(runtime.paths)
+            try:
+                return _run_application(options, root, runtime_lock)
+            finally:
+                configure_paths(None)
+    except (SaveDataError, DefaultPathError, OSError) as error:
+        print(f"存档启动已安全停止：{error}", file=sys.stderr, flush=True)
+        return 2
+
+
+def _run_application(options, root: Path, runtime_lock: DataDirectoryLock) -> int:
     configure_logging()
-    state = PlayerStateManager()
+    state = PlayerStateManager(runtime_root=root, runtime_lock=runtime_lock,
+        preload_limits={"preload_max_assets": options.preload_max_assets,
+                        "preload_max_bytes": options.preload_budget_mib * 1024 * 1024})
+    try:
+        assistant = state.state_for(state.local_player)
+        profile = assistant._drawing_profile(assistant.selected_profile_id)
+        preferences = assistant.preferences.get(profile.id)["data"]
+        provider = assistant.source_for_profile(profile.id)
+        map_id = preferences.get("selectedMapId") or None
+        preference_key = map_id if provider == "tarkov.dev" else f"{provider}:{map_id}"
+        floor = preferences.get("selectedMapFloors", {}).get(preference_key)
+        if not options.no_preload:
+            assistant.sources.preload(provider, profile.game_mode, map_id, preferred_floor=floor, all_sources=True)
+    except Exception:
+        state.close()
+        raise
     mobile_access_info: dict[str, Any] = {}
     handler = _make_handler(state, mobile_access_info)
     try:

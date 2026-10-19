@@ -329,6 +329,11 @@ input:focus, select:focus, textarea:focus { border-color: var(--focus); box-shad
 #mapImage { display: block; width: 100%; height: auto; user-select: none; -webkit-user-drag: none; }
 #mapImage[hidden] { display: none; }
 .map-drawings { position: absolute; z-index: 1; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.map-route-color-control { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+.map-route-color-control input[type="color"] { width: 30px; height: 28px; min-height: 28px; padding: 2px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-soft); cursor: pointer; }
+.map-route-width-control { width: 62px; min-height: 30px; padding: 4px 20px 4px 8px; font-size: 11px; }
+.map-route-status-row { display: flex; min-height: 24px; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; color: var(--muted); font-size: 11px; }
+.map-route-status-row [data-state="pending"], .map-route-status-row [data-state="error"] { color: var(--warning); }
 .map-markers { position: absolute; z-index: 2; inset: 0; pointer-events: none; }
 .map-image-frame.is-drawing { cursor: crosshair; }
 .map-image-frame.is-drawing .map-drawings { z-index: 4; pointer-events: all; cursor: crosshair; }
@@ -880,6 +885,7 @@ dialog { border-radius: var(--ui-radius-panel); }
 .key-summary-icon, .key-summary-icon-fallback { grid-area: 1 / 1; }
 .key-summary-icon { width: 58px; height: 58px; border: 1px solid var(--border); border-radius: 10px; padding: 5px; background: var(--panel-soft); object-fit: contain; }
 .key-summary-icon[hidden], .key-summary-icon-fallback[hidden] { display: none; }
+.map-task-point-status { margin: 0 0 10px; padding: 8px 10px; border-radius: 8px; background: var(--panel-soft); color: var(--muted); font-size: 11px; line-height: 1.5; }
 .key-summary-icon-fallback { display: grid; width: 58px; height: 58px; place-items: center; border: 1px solid var(--border); border-radius: 10px; background: var(--panel-soft); font-size: 25px; }
 .key-summary-name { display: -webkit-box; width: 100%; min-height: 30px; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; text-align: center; font-size: 11px; font-weight: 600; line-height: 1.4; }
 .key-summary-ownership { color: var(--subtle); font-size: 9px; line-height: 1; }
@@ -1411,3 +1417,16 @@ textarea:focus-visible,
     grid-template-columns: 15px 9px minmax(0, 1fr);
   }
 }
+
+.source-picker { padding: 12px 16px; border-bottom: 1px solid var(--ui-border); }
+.source-picker label { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-weight: 600; }
+.source-picker select { min-width: 240px; max-width: 100%; }
+.source-picker .planning-note { margin: 8px 0 0; }
+ .save-data-content { padding: 0 20px 20px; font-size: 13px; line-height: 1.6; }
+ .save-data-actions { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; margin: 12px 0; }
+ .save-data-actions label { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+ .save-data-actions input[type="text"] { width: min(440px, 75vw); }
+ .save-conflict { border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
+ .save-dataset-list { display: grid; gap: 8px; }
+ .save-dataset-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+ .save-dataset-row span { flex: 1; min-width: 180px; overflow-wrap: anywhere; }

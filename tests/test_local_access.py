@@ -11,6 +11,7 @@ from urllib.request import Request, urlopen
 from unittest.mock import patch
 
 from web_server import PlayerStateManager, _make_handler
+from catalog import CatalogError
 
 
 class LocalAccessTests(unittest.TestCase):
@@ -22,6 +23,8 @@ class LocalAccessTests(unittest.TestCase):
             {"LOCALAPPDATA": str(self.root / "windows-local-app-data")},
         )
         self.environment.start()
+        self.network = patch("data_sources.SourceAdapters.task_catalog", side_effect=CatalogError("unit test: offline"))
+        self.network.start()
         self.managers = []
         self.servers = []
 
@@ -38,10 +41,12 @@ class LocalAccessTests(unittest.TestCase):
                 handler.close()
                 logger.removeHandler(handler)
         self.environment.stop()
+        self.network.stop()
         self.temp_dir.cleanup()
 
     def start_service(self, mobile_only=False):
         manager = PlayerStateManager(self.root / "app-data")
+        manager.state_for(manager.local_player)
         handler = _make_handler(manager, {}, mobile_only=mobile_only)
         server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
         server.daemon_threads = True
@@ -122,6 +127,9 @@ class LocalAccessTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(len(snapshot["profiles"]), 1)
         self.assertIn("tasks", snapshot)
+        self.assertEqual(snapshot["data_source"], "tarkov.dev")
+        status, _, _ = self.request(server, "/api/data-source", {"source": "eftarkov"}, cookie=cookie)
+        self.assertEqual(status, 403)
 
         status, _, _ = self.request(
             server,

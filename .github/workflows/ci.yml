@@ -11,6 +11,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: pwsh
+
 jobs:
   verify:
     name: Verify source
@@ -19,25 +23,26 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up pinned Windows Python
+        uses: conda-incubator/setup-miniconda@v3
         with:
-          python-version: "3.11"
-          cache: pip
-          cache-dependency-path: requirements.txt
+          miniforge-version: "26.7.2-0"
+          activate-environment: eft-release
+          environment-file: .github/conda-release.yml
+          channels: conda-forge
+          channel-priority: strict
+          auto-update-conda: false
+          remove-defaults: true
 
-      - name: Install runtime dependencies
-        run: python -m pip install -r requirements.txt
-
-      - name: Install test runner
-        run: python -m pip install pytest
+      - name: Install locked verification dependencies
+        run: python -m pip install -r requirements-build.txt
 
       - name: Check installed dependencies
         run: python -m pip check
 
       - name: Compile and import Python modules
         run: |
-          python -m compileall -q main.py catalog.py diagnostics.py hideout_data.py players.py recognition.py storage.py task_requirements.py tarkov_dev_catalog.py tarkov_dev_maps.py point_images.py web_server.py
+          python -m compileall -q main.py catalog.py diagnostics.py hideout_data.py players.py recognition.py storage.py task_requirements.py tarkov_dev_catalog.py tarkov_dev_maps.py point_images.py web_server.py data_sources.py network_candidates.py route_storage.py save_data.py app_paths.py save_runtime.py save_setup.py preference_store.py reemr_maps.py asset_cache.py map_preload.py default_paths.py legacy_saves.py
           python -c "import catalog, diagnostics, hideout_data, main, players, recognition, storage, task_requirements, tarkov_dev_catalog, tarkov_dev_maps, point_images, web_server; print('Python imports passed')"
           python -m pytest -q
 
@@ -55,56 +60,116 @@ jobs:
       - name: Check mobile frontend JavaScript syntax
         run: node --check web/mobile.js
 
-  release:
-    name: Build and publish Windows release
-    if: startsWith(github.ref, 'refs/tags/v')
+      - name: Check shared route JavaScript syntax
+        run: node --check web/route_tools.js
+
+      - name: Test shared route compatibility and rendering
+        run: node --test tests/test_route_tools.cjs
+
+      - name: Check and test shared preferences
+        run: |
+          node --check web/preference_sync.js
+          node --check web/save_tools.js
+          node --test tests/test_preference_sync.cjs
+          node --test tests/test_save_tools.cjs
+          node --test tests/test_ui_state.cjs
+
+  build:
+    name: Build and verify Windows candidate
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     needs: verify
     runs-on: windows-latest
-    permissions:
-      contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
-      - name: Check out tagged source
+      - name: Check out exact source commit
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
 
-      - name: Check versioned release notes
+      - name: Validate release version and tag
+        id: version
         shell: pwsh
         run: |
-          $notes = Join-Path $PWD "docs/releases/$($env:GITHUB_REF_NAME).md"
+          $version = (Get-Content -Raw release_version.json | ConvertFrom-Json).version
+          if ($version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+            throw 'Invalid release_version.json version.'
+          }
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -cne "v$version") {
+            throw 'Release tag must match release_version.json as vMAJOR.MINOR.PATCH.'
+          }
+          $notes = Join-Path $PWD "docs/releases/v$version.md"
           if (-not (Test-Path -LiteralPath $notes)) {
             throw "Missing bilingual release notes: $notes"
           }
+          "version=$version" >> $env:GITHUB_OUTPUT
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up pinned Windows Python
+        uses: conda-incubator/setup-miniconda@v3
         with:
-          python-version: "3.11"
-          cache: pip
-          cache-dependency-path: requirements-build.txt
+          miniforge-version: "26.7.2-0"
+          activate-environment: eft-release
+          environment-file: .github/conda-release.yml
+          channels: conda-forge
+          channel-priority: strict
+          auto-update-conda: false
+          remove-defaults: true
 
       - name: Install build dependencies
         run: python -m pip install -r requirements-build.txt
 
-      - name: Build Windows executable
-        id: build
+      - name: Build Windows portable candidate
         shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: |
-          $version = $env:GITHUB_REF_NAME.TrimStart('v')
-          if ($version -notmatch '^\d+\.\d+\.\d+$') {
-            throw "Release tag must use vMAJOR.MINOR.PATCH, got $env:GITHUB_REF_NAME"
-          }
-          & "$PWD/build_windows.ps1" -Version $version
+          $parameters = @{ Version = $env:RELEASE_VERSION; SourceCommit = $env:GITHUB_SHA }
+          if ($env:GITHUB_REF_TYPE -eq 'tag') { $parameters.Tag = $env:GITHUB_REF_NAME }
+          & "$PWD/build_windows.ps1" @parameters
 
-      - name: Smoke-test packaged executable
+      - name: Verify checksums and smoke-test extracted portable ZIP
         shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: |
-          $version = $env:GITHUB_REF_NAME.TrimStart('v')
-          $exe = (Resolve-Path "dist/EFTTaskAssistant-v$version-Windows-x64.exe").Path
-          $dataRoot = Join-Path $env:RUNNER_TEMP 'eft-task-assistant-smoke'
-          $stdout = Join-Path $env:RUNNER_TEMP 'eft-task-assistant.stdout.log'
-          $stderr = Join-Path $env:RUNNER_TEMP 'eft-task-assistant.stderr.log'
-          New-Item -ItemType Directory -Force -Path $dataRoot | Out-Null
-          $env:LOCALAPPDATA = $dataRoot
-          $process = Start-Process -FilePath $exe -ArgumentList @("--port", "18765", "--mobile-port", "18766", "--no-browser") -WorkingDirectory $PWD.Path -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          $version = $env:RELEASE_VERSION
+          $releaseRoot = Join-Path $PWD "dist/v$version"
+          $stem = "EFTTaskAssistant-v$version-Windows-x64"
+          foreach ($line in Get-Content -LiteralPath (Join-Path $releaseRoot 'SHA256SUMS.txt')) {
+            $hash, $name = $line -split '  ', 2
+            if ((Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $releaseRoot $name)).Hash.ToLowerInvariant() -cne $hash) {
+              throw "Release checksum mismatch: $name"
+            }
+          }
+          $qaId = [guid]::NewGuid().ToString()
+          $smokeRoot = Join-Path $env:RUNNER_TEMP "eft-smoke-$qaId"
+          $extractRoot = Join-Path $smokeRoot 'portable'
+          Expand-Archive -LiteralPath (Join-Path $releaseRoot "$stem-portable.zip") -DestinationPath $extractRoot
+          foreach ($line in Get-Content -LiteralPath (Join-Path $extractRoot 'SHA256SUMS.txt')) {
+            $hash, $name = $line -split '  ', 2
+            if ((Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $extractRoot $name)).Hash.ToLowerInvariant() -cne $hash) {
+              throw "Portable checksum mismatch: $name"
+            }
+          }
+          $info = Get-Content -Raw -LiteralPath (Join-Path $extractRoot 'BUILD-INFO.json') | ConvertFrom-Json
+          if ($info.version -cne $version -or $info.source_commit -cne $env:GITHUB_SHA -or $info.python -cne '3.11.17') {
+            throw 'Portable BUILD-INFO does not match the requested build.'
+          }
+          $exe = (Resolve-Path (Join-Path $extractRoot "$stem.exe")).Path
+          if ((Get-Item -LiteralPath $exe).VersionInfo.ProductVersion -cne $version) {
+            throw 'Executable version resource does not match the release version.'
+          }
+          $env:EFT_TASK_ASSISTANT_CHANNEL = "qa-$qaId"
+          $env:LOCALAPPDATA = Join-Path $smokeRoot 'localappdata'
+          New-Item -ItemType Directory -Force -Path $env:LOCALAPPDATA | Out-Null
+          $savedGames = & python -B -c "from default_paths import known_folder_path; print(known_folder_path('SavedGames'))"
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot query the Saved Games Known Folder.' }
+          $expectedRoot = Join-Path $savedGames "EFTTaskAssistant-QA/$qaId"
+          if (Test-Path -LiteralPath $expectedRoot) { throw 'Isolated smoke root already exists; refusing reuse.' }
+          $stdout = Join-Path $smokeRoot 'stdout.log'
+          $stderr = Join-Path $smokeRoot 'stderr.log'
+          $process = Start-Process -FilePath $exe -ArgumentList @("--port", "18765", "--mobile-port", "18766", "--no-browser", "--no-preload") -WorkingDirectory $extractRoot -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
           try {
             $deadline = (Get-Date).AddSeconds(60)
             $healthy = $false
@@ -127,6 +192,10 @@ jobs:
             }
             if ($response.Content -match 'id="authForm"') {
               throw 'Packaged desktop page unexpectedly contains the retired account-login form.'
+            }
+            $saveData = Invoke-RestMethod -Uri 'http://127.0.0.1:18765/api/save-data' -TimeoutSec 5
+            if (-not $saveData.root -or [IO.Path]::GetFullPath($saveData.root).TrimEnd('\') -ine [IO.Path]::GetFullPath($expectedRoot).TrimEnd('\')) {
+              throw "Packaged app used an unexpected save root: $($saveData.root); expected $expectedRoot"
             }
             $localState = Invoke-RestMethod -Uri 'http://127.0.0.1:18765/api/state' -TimeoutSec 5
             if (-not $localState.profiles -or -not $localState.selected_profile_id) {
@@ -179,32 +248,62 @@ jobs:
             }
           } finally {
             if (-not $process.HasExited) {
-              Stop-Process -Id $process.Id -Force
+              & taskkill /PID $process.Id /T /F | Out-Null
+              if ($LASTEXITCODE -ne 0 -and -not $process.HasExited) { throw 'Could not stop the smoke process tree.' }
             }
           }
 
-      - name: Calculate executable SHA-256
-        id: checksum
-        shell: pwsh
-        run: |
-          $version = $env:GITHUB_REF_NAME.TrimStart('v')
-          $exe = "dist/EFTTaskAssistant-v$version-Windows-x64.exe"
-          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $exe).Hash.ToLowerInvariant()
-          "sha256=$hash" >> $env:GITHUB_OUTPUT
-          "$hash  $(Split-Path -Leaf $exe)" | Set-Content -LiteralPath "dist/SHA256SUMS.txt" -Encoding ascii
-          $notes = Join-Path $PWD "docs/releases/$($env:GITHUB_REF_NAME).md"
-          Add-Content -LiteralPath $notes -Value @('', '---', '', "Windows x64 executable SHA-256 / 可执行文件 SHA-256：$hash")
-
-      - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Upload verified candidate artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: EFT Task Assistant ${{ github.ref_name }}
-          tag_name: ${{ github.ref_name }}
-          make_latest: true
-          fail_on_unmatched_files: true
-          body_path: docs/releases/${{ github.ref_name }}.md
-          files: |
-            dist/EFTTaskAssistant-${{ github.ref_name }}-Windows-x64.exe
-            dist/SHA256SUMS.txt
-            dist/LICENSE.txt
-            dist/THIRD_PARTY_NOTICES.md
+          name: windows-candidate-${{ steps.version.outputs.version }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          path: |
+            dist/v${{ steps.version.outputs.version }}/EFTTaskAssistant-v${{ steps.version.outputs.version }}-Windows-x64.exe
+            dist/v${{ steps.version.outputs.version }}/EFTTaskAssistant-v${{ steps.version.outputs.version }}-Windows-x64-portable.zip
+            dist/v${{ steps.version.outputs.version }}/SHA256SUMS.txt
+
+  release:
+    name: Publish new tagged release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [verify, build]
+    runs-on: windows-latest
+    concurrency:
+      group: publish-${{ github.ref }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - name: Check out exact tagged commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Download verified candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-candidate-${{ needs.build.outputs.version }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release-artifacts
+
+      - name: Refuse existing release and publish once
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          $version = $env:RELEASE_VERSION
+          if ($env:GITHUB_REF_NAME -cne "v$version") { throw 'Release tag/version mismatch.' }
+          $uri = "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/releases/tags/$env:GITHUB_REF_NAME"
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json' }
+          $existing = Invoke-WebRequest -Uri $uri -Headers $headers -SkipHttpErrorCheck
+          if ($existing.StatusCode -eq 200) { throw 'This release already exists; refusing to overwrite it.' }
+          if ($existing.StatusCode -ne 404) { throw "Release existence check failed: HTTP $($existing.StatusCode)" }
+          foreach ($line in Get-Content release-artifacts/SHA256SUMS.txt) {
+            $hash, $name = $line -split '  ', 2
+            if ((Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path 'release-artifacts' $name)).Hash.ToLowerInvariant() -cne $hash) {
+              throw "Downloaded artifact checksum mismatch: $name"
+            }
+          }
+          $stem = "release-artifacts/EFTTaskAssistant-v$version-Windows-x64"
+          & gh release create $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --verify-tag --latest --title "EFT Task Assistant v$version" --notes-file "docs/releases/v$version.md" "$stem.exe" "$stem-portable.zip" 'release-artifacts/SHA256SUMS.txt'
+          if ($LASTEXITCODE -ne 0) { throw 'Creating the new release failed; existing releases are never updated.' }

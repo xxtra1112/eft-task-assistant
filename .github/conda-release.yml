@@ -1,0 +1,7 @@
+name: eft-release
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.11.17=hb12b558_2_cpython
+  - pip

@@ -12,6 +12,7 @@ from urllib.request import Request, urlopen
 
 from diagnostics import log_event
 from storage import default_database_path
+from app_paths import public_cache_root
 
 
 SOURCE_ROOT = "https://json.tarkov.dev/pve"
@@ -24,7 +25,7 @@ _CACHE_LOCK = threading.Lock()
 
 
 def _cache_path() -> Path:
-    return default_database_path().parent / "public-data" / "hideout-pve.json"
+    return public_cache_root(default_database_path().parent) / "hideout-pve.json"
 
 
 def _request_json(url: str) -> dict[str, Any]:

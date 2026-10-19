@@ -1,63 +1,67 @@
 param(
-    [ValidatePattern('^\d+\.\d+\.\d+$')]
-    [string]$Version = "1.2.0"
+    [ValidatePattern('^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$')]
+    [string]$Version = "1.3.0",
+    [string]$SourceCommit,
+    [string]$Tag,
+    [switch]$DiagnosticOnly
 )
 
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $buildRoot = Join-Path $projectRoot "build\pyinstaller"
-$distRoot = Join-Path $projectRoot "dist"
-$pythonVersion = & python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"
-
-if ($LASTEXITCODE -ne 0) {
-    throw "Python was not found. Activate the eft-task-assistant Conda environment first."
-}
-if ($pythonVersion -ne "3.11") {
-    throw "Python 3.11 is required; the active interpreter is Python $pythonVersion."
-}
-if (-not (Test-Path (Join-Path $projectRoot "web\index.html"))) {
-    throw "The web UI files are missing from the project."
-}
-
-New-Item -ItemType Directory -Force -Path $buildRoot, $distRoot | Out-Null
-$arguments = @(
-    "-m", "PyInstaller",
-    "--noconfirm",
-    "--clean",
-    "--onefile",
-    "--console",
-    "--name", "EFTTaskAssistant",
-    "--distpath", $distRoot,
-    "--workpath", (Join-Path $buildRoot "work"),
-    "--specpath", $buildRoot,
-    "--add-data", "$(Join-Path $projectRoot 'web');web",
-    "--add-data", "$(Join-Path $projectRoot 'LICENSE');.",
-    "--add-data", "$(Join-Path $projectRoot 'THIRD_PARTY_NOTICES.md');.",
-    "--collect-all", "rapidocr_onnxruntime",
-    "--collect-all", "cv2",
-    (Join-Path $projectRoot "main.py")
-)
+$distRoot = Join-Path $projectRoot "dist\v$Version"
+$packager = Join-Path $projectRoot "pack_release.py"
 
 Push-Location $projectRoot
 try {
-    & python @arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "PyInstaller failed with exit code $LASTEXITCODE."
+    if (-not $SourceCommit) {
+        $SourceCommit = & git rev-parse HEAD
+        if ($LASTEXITCODE -ne 0) { throw "Cannot determine checkout HEAD." }
     }
+    $validation = @("-B", $packager, "--root", $projectRoot, "--version", $Version, "--source-commit", $SourceCommit)
+    if ($Tag) { $validation += @("--tag", $Tag) }
+    & python @validation --check-only
+    if ($LASTEXITCODE -ne 0) { throw "Release input validation failed. Commit the final source and use the locked Python environment." }
+    & python -m pip check
+    if ($LASTEXITCODE -ne 0) { throw "Installed dependencies failed pip check." }
+    if ($DiagnosticOnly) { return }
+    if (Test-Path -LiteralPath $distRoot) { throw "Output directory already exists: $distRoot. Use a fresh checkout or remove only its previous build outputs." }
 
-    $builtExecutable = Join-Path $distRoot "EFTTaskAssistant.exe"
-    if (-not (Test-Path $builtExecutable)) {
-        throw "PyInstaller completed without producing EFTTaskAssistant.exe."
+    New-Item -ItemType Directory -Force -Path $buildRoot | Out-Null
+    $versionFile = Join-Path $buildRoot "windows-version.txt"
+    $versionTuple = ($Version.Split('.') + @('0')) -join ', '
+    @"
+VSVersionInfo(
+  ffi=FixedFileInfo(filevers=($versionTuple), prodvers=($versionTuple), mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)),
+  kids=[StringFileInfo([StringTable('040904B0', [StringStruct('FileVersion', '$Version'), StringStruct('ProductVersion', '$Version'), StringStruct('ProductName', 'EFT Task Assistant')])]), VarFileInfo([VarStruct('Translation', [1033, 1200])])]
+)
+"@ | Set-Content -LiteralPath $versionFile -Encoding utf8
+    $arguments = @(
+        "-B", "-m", "PyInstaller",
+        "--noconfirm", "--clean", "--onefile", "--console",
+        "--name", "EFTTaskAssistant",
+        "--distpath", (Join-Path $buildRoot "dist"),
+        "--workpath", (Join-Path $buildRoot "work"),
+        "--specpath", $buildRoot,
+        "--version-file", $versionFile,
+        "--add-data", "$(Join-Path $projectRoot 'release_version.json');.",
+        "--add-data", "$(Join-Path $projectRoot 'LICENSE');.",
+        "--add-data", "$(Join-Path $projectRoot 'THIRD_PARTY_NOTICES.md');.",
+        "--collect-all", "rapidocr_onnxruntime",
+        "--collect-all", "cv2"
+    )
+    $webFiles = & python -B -c "from pack_release import WEB_FILES; print('\n'.join(WEB_FILES))"
+    if ($LASTEXITCODE -ne 0) { throw "Cannot load the web asset allowlist." }
+    foreach ($file in $webFiles) {
+        $arguments += @("--add-data", "$(Join-Path $projectRoot "web\$file");web")
     }
-    $releaseExecutable = Join-Path $distRoot "EFTTaskAssistant-v$Version-Windows-x64.exe"
-    Copy-Item -LiteralPath $builtExecutable -Destination $releaseExecutable -Force
-    Copy-Item -LiteralPath (Join-Path $projectRoot "LICENSE") -Destination (Join-Path $distRoot "LICENSE.txt") -Force
-    Copy-Item -LiteralPath (Join-Path $projectRoot "THIRD_PARTY_NOTICES.md") -Destination $distRoot -Force
-    $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $releaseExecutable).Hash
-    $size = (Get-Item -LiteralPath $releaseExecutable).Length
-    Write-Output "Built: $releaseExecutable"
-    Write-Output "Size: $size bytes"
-    Write-Output "SHA256: $hash"
+    $arguments += (Join-Path $projectRoot "main.py")
+    & python @arguments
+    if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed with exit code $LASTEXITCODE." }
+    $builtExecutable = Join-Path $buildRoot "dist\EFTTaskAssistant.exe"
+    & python @validation --exe $builtExecutable --output-dir $distRoot
+    if ($LASTEXITCODE -ne 0) { throw "Portable release packaging failed." }
+    Get-Content -LiteralPath (Join-Path $distRoot "SHA256SUMS.txt")
 }
 finally {
     Pop-Location

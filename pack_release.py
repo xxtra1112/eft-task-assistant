@@ -35,6 +35,26 @@ WEB_FILES = (
     "app.js", "index.html", "mobile.css", "mobile.html", "mobile.js",
     "preference_sync.js", "route_tools.js", "save_tools.js", "styles.css",
 )
+LICENSE_REPORT = "THIRD_PARTY_LICENSES.txt"
+BUILD_ONLY_DEPENDENCIES = {
+    "altgraph", "iniconfig", "pefile", "pluggy", "pygments",
+    "pyinstaller-hooks-contrib", "pytest", "pywin32-ctypes",
+}
+LICENSE_NAME = re.compile(
+    r"(?:(?:.*[_-])?(?:licen[cs]es?|copying|copyright|notices?)(?:[-_][^.]+)?|thirdpartynotices?)"
+    r"(?:\.(?:txt|text|md|rst|apache|bsd|mit|gpl|lgpl|mpl))?", re.IGNORECASE,
+)
+PYTHON_LICENSE_FILES = ("LICENSE_PYTHON.txt", "LICENSE.txt", "LICENSE")
+INSTALLED_ONLY_DEPENDENCIES = {
+    ("colorama", "0.4.6"), ("flatbuffers", "25.12.19"), ("protobuf", "7.36.2"),
+    ("six", "1.17.0"), ("tqdm", "4.70.1"),
+}
+VENDORED_LICENSES = {
+    ("rapidocr-onnxruntime", "1.4.4"): (
+        "third_party/licenses/rapidocr-onnxruntime-1.4.4-LICENSE.txt",
+        "3e0af25fdd06aa9586ae97adb00ea927ebe5a3805ac77d2d3a81ce5f55693333",
+    ),
+}
 
 
 def sha256(path: Path) -> str:
@@ -123,6 +143,87 @@ def locked_dependencies(root: Path) -> dict[str, str]:
     return dict(sorted(dependencies.items()))
 
 
+def license_text(root: Path, relative: str, expected_sha256: str | None = None) -> str:
+    if not relative or relative.startswith("/") or ":" in relative or ".." in relative.split("/"):
+        raise ValueError("License file must have a safe relative public filename.")
+    try:
+        raw = regular_file(root, relative).read_bytes()
+        if expected_sha256 is not None and hashlib.sha256(raw).hexdigest() != expected_sha256:
+            raise ValueError(f"Vendored license checksum mismatch: {relative}")
+        content = raw.decode("utf-8-sig")
+    except (OSError, UnicodeError) as error:
+        raise ValueError(f"Cannot read UTF-8 license text: {relative}") from error
+    if not content.strip() or "\x00" in content:
+        raise ValueError(f"Empty or non-text license file: {relative}")
+    return content
+
+
+def third_party_licenses(dependencies: dict[str, str], source_root: Path | None = None) -> str:
+    sections = [
+        "THIRD-PARTY LICENSE TEXTS\n"
+        "Collected offline from locked installed distributions, version-specific source licenses and the running Python.\n"
+        "File names are relative to the stated origin: installed distribution, source checkout or Python runtime.\n"
+        "This inventory does not prove which components are bundled in the executable.\n"
+        "Build-only entries describe build environment tools, not bundled runtime components.\n"
+        "Installed-only entries were absent from the reviewed release inventory; recheck them when rebuilding.\n"
+    ]
+    missing = []
+    for name, version in sorted(dependencies.items()):
+        distribution = metadata.distribution(name)
+        if distribution.version != version:
+            raise ValueError(f"Locked dependency mismatch while collecting licenses: {name}")
+        scope = "build-only" if name in BUILD_ONLY_DEPENDENCIES else "runtime dependency"
+        installed_only = (name, version) in INSTALLED_ONLY_DEPENDENCIES
+        if installed_only:
+            scope = "installed-only; not bundled (version-specific release inventory)"
+        if name == "pyinstaller":
+            scope = "build tool; its bootloader may be bundled"
+        sections.append(f"\nComponent: {name}\nVersion: {version}\nScope: {scope}\n")
+        files = sorted({
+            str(item).replace("\\", "/") for item in distribution.files or ()
+            if LICENSE_NAME.fullmatch(str(item).replace("\\", "/").rsplit("/", 1)[-1])
+        })
+        origin = "installed distribution"
+        license_root = Path(distribution.locate_file(""))
+        vendored = VENDORED_LICENSES.get((name, version))
+        expected_sha256 = None
+        if not files and vendored is not None and source_root is not None and (source_root / vendored[0]).is_file():
+            files = [vendored[0]]
+            expected_sha256 = vendored[1]
+            origin = "source checkout (version-specific license fallback)"
+            license_root = source_root
+        sections.append(f"Origin: {origin}\n")
+        if not files:
+            explanation = (
+                f"{name}=={version}: no license text in installed distribution.files; "
+                "a license name or URL in metadata is not a license text."
+            )
+            if vendored is not None:
+                explanation += f" Supply the full reviewed upstream license at {vendored[0]}."
+            if name not in BUILD_ONLY_DEPENDENCIES and not installed_only:
+                missing.append(explanation)
+            sections.append(f"Unavailable: {explanation}\n")
+        for relative in files:
+            content = license_text(license_root, relative, expected_sha256)
+            sections.append(f"\nFile: {relative}\n----- BEGIN LICENSE TEXT -----\n{content}")
+            sections.append("\n----- END LICENSE TEXT -----\n")
+    sections.append(f"\nComponent: Python\nVersion: {platform.python_version()}\nScope: runtime\nOrigin: Python runtime\n")
+    python_root = Path(sys.base_prefix)
+    for relative in PYTHON_LICENSE_FILES:
+        if (python_root / relative).is_file():
+            content = license_text(python_root, relative)
+            if "PYTHON SOFTWARE FOUNDATION LICENSE" not in content.upper():
+                continue
+            sections.append(f"\nFile: {relative}\n----- BEGIN LICENSE TEXT -----\n{content}")
+            sections.append("\n----- END LICENSE TEXT -----\n")
+            break
+    else:
+        missing.append("Python: no PSF license text in the supported runtime-root license files.")
+    if missing:
+        raise ValueError("Missing required runtime license text:\n" + "\n".join(missing))
+    return "".join(sections)
+
+
 def build_info(root: Path, version: str | None, source_commit: str, tag: str | None = None) -> dict:
     value = release_version(root, version, tag)
     validate_source(root, source_commit, tag)
@@ -161,9 +262,16 @@ def write_checksums(path: Path, files: dict[str, Path]) -> None:
 
 
 def package_release(root: Path, executable: Path, output: Path, version: str | None,
-                    source_commit: str, tag: str | None = None) -> dict[str, Path]:
+                    source_commit: str, tag: str | None = None,
+                    licenses_output: Path | None = None) -> dict[str, Path]:
     root = root.resolve()
     info = build_info(root, version, source_commit, tag)
+    if licenses_output is None:
+        raise ValueError("Provide the license report generated before building the executable.")
+    licenses_output = regular_file(licenses_output.parent.resolve(), licenses_output.name)
+    licenses = third_party_licenses(info["dependencies"], root).encode("utf-8")
+    if licenses_output.read_bytes() != licenses:
+        raise ValueError("License report differs from the current locked environment; regenerate and rebuild the executable.")
     version = info["version"]
     executable = regular_file(executable.parent.resolve(), executable.name)
     with executable.open("rb") as stream:
@@ -182,6 +290,10 @@ def package_release(root: Path, executable: Path, output: Path, version: str | N
     with tempfile.TemporaryDirectory(prefix="eft-release-", dir=output.parent) as temporary:
         stage = Path(temporary)
         files = portable_inputs(root, version)
+        licenses_path = stage / LICENSE_REPORT
+        licenses_path.write_bytes(licenses)
+        files[LICENSE_REPORT] = licenses_path
+        info["third_party_licenses_sha256"] = sha256(licenses_path)
         staged_executable = stage / f"{stem}.exe"
         shutil.copyfile(executable, staged_executable)
         files[staged_executable.name] = staged_executable
@@ -212,14 +324,20 @@ def main() -> None:
     parser.add_argument("--check-only", action="store_true")
     parser.add_argument("--exe", type=Path)
     parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--licenses-output", type=Path, help="Generate this license report before building; supply the same file when packaging.")
     args = parser.parse_args()
     try:
         if args.check_only:
             print(json.dumps(build_info(args.root.resolve(), args.version, args.source_commit, args.tag), indent=2))
+        elif args.exe is None and args.licenses_output is not None:
+            info = build_info(args.root.resolve(), args.version, args.source_commit, args.tag)
+            licenses = third_party_licenses(info["dependencies"], args.root.resolve()).encode("utf-8")
+            args.licenses_output.write_bytes(licenses)
+            print(f"Generated {LICENSE_REPORT}")
         else:
-            if args.exe is None or args.output_dir is None:
-                parser.error("--exe and --output-dir are required for packaging")
-            artifacts = package_release(args.root, args.exe, args.output_dir, args.version, args.source_commit, args.tag)
+            if args.exe is None or args.output_dir is None or args.licenses_output is None:
+                parser.error("--exe, --output-dir and --licenses-output are required for packaging")
+            artifacts = package_release(args.root, args.exe, args.output_dir, args.version, args.source_commit, args.tag, args.licenses_output)
             print(json.dumps({name: str(path) for name, path in artifacts.items()}, indent=2))
     except (ValueError, OSError, subprocess.CalledProcessError, metadata.PackageNotFoundError) as error:
         parser.exit(1, f"Release validation failed: {error}\n")

@@ -28,6 +28,9 @@ try {
     if (Test-Path -LiteralPath $distRoot) { throw "Output directory already exists: $distRoot. Use a fresh checkout or remove only its previous build outputs." }
 
     New-Item -ItemType Directory -Force -Path $buildRoot | Out-Null
+    $licensesFile = Join-Path $buildRoot "THIRD_PARTY_LICENSES.txt"
+    & python @validation --licenses-output $licensesFile
+    if ($LASTEXITCODE -ne 0) { throw "Required third-party license texts could not be collected from the locked environment." }
     $versionFile = Join-Path $buildRoot "windows-version.txt"
     $versionTuple = ($Version.Split('.') + @('0')) -join ', '
     @"
@@ -47,6 +50,7 @@ VSVersionInfo(
         "--add-data", "$(Join-Path $projectRoot 'release_version.json');.",
         "--add-data", "$(Join-Path $projectRoot 'LICENSE');.",
         "--add-data", "$(Join-Path $projectRoot 'THIRD_PARTY_NOTICES.md');.",
+        "--add-data", "$licensesFile;.",
         "--collect-all", "rapidocr_onnxruntime",
         "--collect-all", "cv2"
     )
@@ -59,7 +63,7 @@ VSVersionInfo(
     & python @arguments
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed with exit code $LASTEXITCODE." }
     $builtExecutable = Join-Path $buildRoot "dist\EFTTaskAssistant.exe"
-    & python @validation --exe $builtExecutable --output-dir $distRoot
+    & python @validation --exe $builtExecutable --output-dir $distRoot --licenses-output $licensesFile
     if ($LASTEXITCODE -ne 0) { throw "Portable release packaging failed." }
     Get-Content -LiteralPath (Join-Path $distRoot "SHA256SUMS.txt")
 }

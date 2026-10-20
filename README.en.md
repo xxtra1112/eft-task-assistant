@@ -133,3 +133,5 @@ CI checks main/PR source; manual candidate artifacts are not releases. Release t
 ## License
 
 Original code is [MIT licensed](LICENSE). Maps, trademarks, third-party data and dependencies retain their own terms: **MIT code licensing does not grant unrestricted media rights**. Read [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and verify tasks in-game.
+
+Release packages also include `THIRD_PARTY_LICENSES.txt` with dependency/Python license texts and upstream notices; the identical report is embedded in the EXE. `BUILD-INFO.json` records its hash, and portable checksums cover it. Preserve it when redistributing.

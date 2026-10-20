@@ -133,3 +133,5 @@ CI 在 main/PR 检查源码；手动构建用于候选资产，不等于发布�
 ## 许可
 
 原创代码采用 [MIT License](LICENSE)。地图、游戏商标、第三方资料和依赖均有各自许可，**不因为代码是 MIT 就变成无限制媒体授权**。请阅读 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)；使用本工具仍应遵守来源规则，并在游戏内核对任务。
+
+发布包另附 `THIRD_PARTY_LICENSES.txt`，收录所用依赖和 Python 的许可正文及上游声明，同一份文件也嵌入 EXE。它的散列记录在 `BUILD-INFO.json`，便携包的校验和也覆盖此文件；重新分发时请一起保留。
